@@ -178,6 +178,15 @@ fun SettingsScreen(channelsViewModel: ChannelsViewModel) {
                     channelsViewModel.updateSettings { it.copy(preferCastWhenConnected = value) }
                 }
             )
+            SettingsToggle(
+                title = "Live previews while browsing",
+                subtitle = "The centred card fades from its logo into the live stream. " +
+                    "Uses mobile data when you are not on Wi-Fi.",
+                checked = settings.livePreviews,
+                onCheckedChange = { value ->
+                    channelsViewModel.updateSettings { it.copy(livePreviews = value) }
+                }
+            )
         }
 
         // Library

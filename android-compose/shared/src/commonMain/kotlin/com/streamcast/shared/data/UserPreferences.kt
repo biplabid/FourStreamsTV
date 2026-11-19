@@ -60,6 +60,7 @@ class UserPreferences(context: Context) {
             .putBoolean(KEY_AUTOPLAY, updated.autoPlayOnOpen)
             .putBoolean(KEY_KEEP_AWAKE, updated.keepScreenAwake)
             .putBoolean(KEY_PREFER_CAST, updated.preferCastWhenConnected)
+            .putBoolean(KEY_LIVE_PREVIEWS, updated.livePreviews)
             .putString(KEY_LANDING_CATEGORY, updated.defaultCategory.name)
             .apply()
     }
@@ -78,6 +79,7 @@ class UserPreferences(context: Context) {
         autoPlayOnOpen = prefs.getBoolean(KEY_AUTOPLAY, true),
         keepScreenAwake = prefs.getBoolean(KEY_KEEP_AWAKE, true),
         preferCastWhenConnected = prefs.getBoolean(KEY_PREFER_CAST, true),
+        livePreviews = prefs.getBoolean(KEY_LIVE_PREVIEWS, true),
         defaultCategory = runCatching {
             ChannelCategory.valueOf(
                 prefs.getString(KEY_LANDING_CATEGORY, ChannelCategory.ALL.name)
@@ -103,6 +105,7 @@ class UserPreferences(context: Context) {
         const val KEY_AUTOPLAY = "autoplay_on_open"
         const val KEY_KEEP_AWAKE = "keep_screen_awake"
         const val KEY_PREFER_CAST = "prefer_cast_when_connected"
+        const val KEY_LIVE_PREVIEWS = "live_previews"
         const val KEY_LANDING_CATEGORY = "landing_category"
         const val KEY_ONBOARDED = "has_onboarded"
         const val SEPARATOR = "\u001F"
@@ -115,5 +118,7 @@ data class AppSettings(
     val autoPlayOnOpen: Boolean = true,
     val keepScreenAwake: Boolean = true,
     val preferCastWhenConnected: Boolean = true,
+    /** Dissolve the focused browser card from its logo into the live stream. */
+    val livePreviews: Boolean = true,
     val defaultCategory: ChannelCategory = ChannelCategory.ALL
 )

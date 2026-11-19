@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,25 +28,35 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.util.UnstableApi
+import com.streamcast.mobile.ui.preview.rememberChannelPreviewController
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.CastViewModel
 import com.streamcast.mobile.viewmodel.ChannelsViewModel
 import com.streamcast.shared.model.ChannelCategory
+import kotlin.math.abs
 
+@OptIn(UnstableApi::class)
 @Composable
 fun LiveTvScreen(
     channelsViewModel: ChannelsViewModel,
@@ -61,7 +72,52 @@ fun LiveTvScreen(
     val counts by channelsViewModel.categoryCounts.collectAsState()
     val available by channelsViewModel.availableCategories.collectAsState()
 
+    val settings by channelsViewModel.settings.collectAsState()
+    val connectedDevice by castViewModel.connectedDevice.collectAsState()
+
     var isGridView by rememberSaveable { mutableStateOf(true) }
+
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    val previewController = rememberChannelPreviewController(scope)
+
+    /**
+     * "In focus" on a touch screen means the card sitting closest to the middle
+     * of the viewport - there is no D-pad focus to borrow. derivedStateOf keeps
+     * this off the recomposition path for every scroll pixel.
+     */
+    val focusedChannel by remember(filtered) {
+        derivedStateOf {
+            val info = gridState.layoutInfo
+            if (info.visibleItemsInfo.isEmpty()) {
+                null
+            } else {
+                val viewportCentre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+                val nearest = info.visibleItemsInfo.minByOrNull { item ->
+                    abs(item.offset.y + item.size.height / 2f - viewportCentre)
+                }
+                nearest?.index?.let(filtered::getOrNull)
+            }
+        }
+    }
+
+    // Previews are pointless while casting (the TV is the screen that matters)
+    // and are the single most data-hungry thing the app does, so they are opt-out.
+    val previewsAllowed = settings.livePreviews && isGridView && connectedDevice == null
+
+    LaunchedEffect(focusedChannel?.id, previewsAllowed) {
+        previewController.focus(if (previewsAllowed) focusedChannel else null)
+    }
+
+    // Never leave a decoder running behind a backgrounded app.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) previewController.stop()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Deep link from a home-screen genre tile
     LaunchedEffect(initialCategoryName) {
@@ -168,6 +224,7 @@ fun LiveTvScreen(
 
             isGridView -> {
                 LazyVerticalGrid(
+                    state = gridState,
                     columns = GridCells.Fixed(2),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -179,7 +236,10 @@ fun LiveTvScreen(
                             isFavourite = favouriteIds.contains(channel.id),
                             onClick = { onOpenPlayer(channel.id) },
                             onCast = { castViewModel.castChannel(channel) },
-                            onToggleFavourite = { channelsViewModel.toggleFavourite(channel.id) }
+                            onToggleFavourite = { channelsViewModel.toggleFavourite(channel.id) },
+                            previewPlayer = previewController.playerFor(channel.id),
+                            previewRevealed = previewController.isRevealed &&
+                                previewController.activeChannelId == channel.id
                         )
                     }
                 }

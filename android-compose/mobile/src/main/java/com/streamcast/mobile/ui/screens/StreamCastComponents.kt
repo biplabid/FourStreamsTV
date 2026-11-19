@@ -2,6 +2,7 @@ package com.streamcast.mobile.ui.screens
 
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -56,6 +57,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.shared.model.Channel
@@ -68,6 +74,9 @@ import com.streamcast.shared.model.TvDevice
  * These render only what an M3U playlist actually provides: name, logo,
  * category, language, resolution hint and the geo-blocked marker.
  */
+
+/** Length of the logo-to-video crossfade on a previewing card. */
+const val PREVIEW_DISSOLVE_MS = 1_100
 
 /** Pulsing dot used to mark a live stream. */
 @Composable
@@ -402,7 +411,14 @@ fun ChannelRailCard(
     }
 }
 
-/** Grid tile used in the Live TV browser. */
+/**
+ * Grid tile used in the Live TV browser.
+ *
+ * When [previewPlayer] is non-null this tile owns the single live preview: the
+ * player renders underneath the logo straight away, and [previewRevealed]
+ * triggers the crossfade once real video is on screen.
+ */
+@OptIn(UnstableApi::class)
 @Composable
 fun ChannelGridCard(
     channel: Channel,
@@ -410,8 +426,17 @@ fun ChannelGridCard(
     onClick: () -> Unit,
     onCast: () -> Unit,
     onToggleFavourite: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    previewPlayer: ExoPlayer? = null,
+    previewRevealed: Boolean = false
 ) {
+    // Drives both halves of the dissolve: video fades up as the logo fades out.
+    val videoAlpha by animateFloatAsState(
+        targetValue = if (previewPlayer != null && previewRevealed) 1f else 0f,
+        animationSpec = tween(durationMillis = PREVIEW_DISSOLVE_MS),
+        label = "preview-dissolve"
+    )
+
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
@@ -424,9 +449,31 @@ fun ChannelGridCard(
                 .aspectRatio(16f / 9f)
                 .background(StreamCastColors.SurfaceLow)
         ) {
+            // Attached for the whole preview, not just the visible part: the
+            // decoder needs a surface to render into before onRenderedFirstFrame
+            // can fire, which is the signal that starts the dissolve.
+            if (previewPlayer != null) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize().alpha(videoAlpha),
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = false
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            setKeepContentOnPlayerReset(true)
+                        }
+                    },
+                    update = { view -> view.player = previewPlayer },
+                    onRelease = { view -> view.player = null }
+                )
+            }
+
             ChannelLogo(
                 channel = channel,
-                modifier = Modifier.align(Alignment.Center).size(60.dp, 44.dp),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(60.dp, 44.dp)
+                    .alpha(1f - videoAlpha),
                 cornerRadius = 8
             )
             if (channel.isGeoRestricted) {
