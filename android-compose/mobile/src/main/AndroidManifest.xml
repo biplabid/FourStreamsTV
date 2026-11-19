@@ -2,19 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Network & Streaming Permissions -->
+    <!-- Network & streaming -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Nearby Devices & Wi-Fi Discovery Approvals (Android 13+ / API 33+) -->
+    <!-- Cast playback notification (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- mDNS discovery of Cast receivers on the local network (Android 13+) -->
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"
-        tools:targetApi="s_v2" />
+        tools:targetApi="tiramisu" />
 
-    <!-- Location permissions fallback for Wi-Fi scanning on API 32 and lower -->
+    <!-- Pre-API-33 devices gate local network discovery behind location -->
     <uses-permission
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="32" />
@@ -24,23 +28,47 @@
 
     <application
         android:allowBackup="true"
-        android:label="StreamCast"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.StreamCast">
 
-        <!-- Google Cast OptionsProvider for Media3 / CastContext -->
+        <!--
+          Our own OptionsProvider instead of media3's DefaultCastOptionsProvider,
+          so the receiver application ID, autojoin behaviour and the playback
+          notification are all under app control. See StreamCastOptionsProvider.
+        -->
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
-            android:value="androidx.media3.cast.DefaultCastOptionsProvider" />
+            android:value="com.streamcast.mobile.cast.StreamCastOptionsProvider" />
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden">
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
+            android:theme="@style/Theme.StreamCast">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <!-- Full-screen Cast controls, opened from the playback notification -->
+        <activity
+            android:name=".cast.ExpandedControlsActivity"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.StreamCast.Expanded"
+            tools:ignore="DiscouragedApi,LockedOrientationActivity">
+            <meta-data
+                android:name="android.support.PARENT_ACTIVITY"
+                android:value="com.streamcast.mobile.MainActivity" />
         </activity>
     </application>
 

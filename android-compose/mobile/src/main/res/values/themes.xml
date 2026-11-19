@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      AppCompat-derived on purpose: the Google Cast framework's expanded
+      controller and media route dialogs require a Theme.AppCompat ancestor.
+    -->
+    <style name="Theme.StreamCast" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@color/streamcast_background</item>
+        <item name="android:navigationBarColor">@color/streamcast_background</item>
+        <item name="android:windowBackground">@color/streamcast_background</item>
+        <item name="colorAccent">@color/streamcast_violet</item>
+    </style>
+
+    <style name="Theme.StreamCast.Expanded" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorAccent">@color/streamcast_violet</item>
+        <item name="android:windowBackground">@color/streamcast_background</item>
+    </style>
+</resources>

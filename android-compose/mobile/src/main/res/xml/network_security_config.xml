@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A large share of public IPTV streams are still served over plain HTTP.
+  Cleartext is permitted for stream playback; user-entered playlist URLs are
+  validated to http/https in the settings screen.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

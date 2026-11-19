@@ -1,48 +1,33 @@
 package com.streamcast.mobile.ui.screens
 
-import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.CastConnected
-import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Security
-import androidx.compose.material.icons.rounded.SettingsRemote
+import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.WifiOff
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,12 +41,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.CastViewModel
 import com.streamcast.shared.model.DiscoveryState
 import com.streamcast.shared.model.TvDevice
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Device picker driven entirely by live MediaRouter discovery.
+ *
+ * Requests the local-network permission first, because without it the system
+ * returns an empty route list and the user is left staring at "no devices
+ * found" with no explanation.
+ */
 @Composable
 fun CastDevicePickerModal(
     castViewModel: CastViewModel,
@@ -69,441 +61,328 @@ fun CastDevicePickerModal(
     onOpenRemote: () -> Unit
 ) {
     val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val discoveryState by castViewModel.discoveryState.collectAsState()
     val connectedDevice by castViewModel.connectedDevice.collectAsState()
-    val currentCastingChannel by castViewModel.currentCastingChannel.collectAsState()
-    val hasApprovals by castViewModel.hasApprovals.collectAsState()
+    val hasPermission by castViewModel.hasDiscoveryPermission.collectAsState()
     val isWifiConnected by castViewModel.isWifiConnected.collectAsState()
 
-    val permissionToRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        "android.permission.NEARBY_WIFI_DEVICES"
-    } else {
-        android.Manifest.permission.ACCESS_FINE_LOCATION
-    }
-
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { _ ->
-        castViewModel.onPermissionsApproved(context)
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        castViewModel.onPermissionResult(context, granted)
     }
 
     LaunchedEffect(Unit) {
-        castViewModel.checkApprovals(context)
-        if (hasApprovals) {
+        castViewModel.refreshEnvironment(context)
+    }
+
+    LaunchedEffect(hasPermission, isWifiConnected) {
+        if (hasPermission && isWifiConnected) {
             castViewModel.startDiscovery()
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismissRequest,
-        sheetState = sheetState,
-        containerColor = StreamCastColors.Background,
-        scrimColor = Color.Black.copy(alpha = 0.65f)
-    ) {
+    Dialog(onDismissRequest = onDismissRequest) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(StreamCastColors.SurfaceSecondary)
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Modal Header Row with Refresh & Close Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(StreamCastColors.SecondaryContainer.copy(alpha = 0.2f)),
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Cast to",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp
+                    )
+                    Text(
+                        text = "Chromecast and Google TV devices on your Wi-Fi",
+                        color = StreamCastColors.TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+                IconButton(onClick = { castViewModel.startDiscovery() }) {
+                    Icon(
+                        Icons.Rounded.Refresh,
+                        contentDescription = "Scan again",
+                        tint = StreamCastColors.TextSecondary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+                IconButton(onClick = onDismissRequest) {
+                    Icon(
+                        Icons.Rounded.Close,
+                        contentDescription = "Close",
+                        tint = StreamCastColors.TextSecondary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+
+            when {
+                // Blockers first - these explain an empty list
+                !isWifiConnected -> BlockerPanel(
+                    icon = Icons.Rounded.WifiOff,
+                    title = "Not on Wi-Fi",
+                    message = "Cast devices are found over your local network. Connect this " +
+                        "phone to the same Wi-Fi as your TV - mobile data cannot discover TVs.",
+                    actionLabel = "Check again",
+                    onAction = { castViewModel.refreshEnvironment(context) }
+                )
+
+                !hasPermission -> BlockerPanel(
+                    icon = Icons.Rounded.Cast,
+                    title = "Local network access needed",
+                    message = "Android requires the nearby-devices permission before an app " +
+                        "can discover Cast receivers on your Wi-Fi.",
+                    actionLabel = "Grant permission",
+                    onAction = { permissionLauncher.launch(castViewModel.requiredPermission) }
+                )
+
+                else -> when (val state = discoveryState) {
+                    is DiscoveryState.Connected -> ConnectedPanel(
+                        device = state.device,
+                        onDisconnect = { castViewModel.disconnect() },
+                        onOpenRemote = {
+                            onDismissRequest()
+                            onOpenRemote()
+                        }
+                    )
+
+                    is DiscoveryState.Connecting -> Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            color = StreamCastColors.PrimaryViolet,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Text(
+                            text = "Connecting to ${state.device.name}…",
+                            color = Color.White,
+                            fontSize = 13.sp
+                        )
+                        Text(
+                            text = "Waiting for the TV to accept the session",
+                            color = StreamCastColors.TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    is DiscoveryState.Searching -> Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            color = StreamCastColors.PrimaryViolet,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Text(
+                            text = "Looking for devices…",
+                            color = StreamCastColors.TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    is DiscoveryState.Found -> DeviceList(
+                        devices = state.devices,
+                        connectedId = connectedDevice?.id,
+                        onConnect = { castViewModel.connectTo(it) }
+                    )
+
+                    is DiscoveryState.Failed -> BlockerPanel(
+                        icon = Icons.Rounded.ErrorOutline,
+                        title = "Could not connect",
+                        message = state.reason,
+                        actionLabel = "Scan again",
+                        onAction = { castViewModel.startDiscovery() }
+                    )
+
+                    DiscoveryState.Empty -> BlockerPanel(
+                        icon = Icons.Rounded.SearchOff,
+                        title = "No devices found",
+                        message = "Make sure your Chromecast or Google TV is powered on and " +
+                            "joined to this same Wi-Fi network. Some routers block the mDNS " +
+                            "traffic Cast relies on - check that AP isolation is off.",
+                        actionLabel = "Scan again",
+                        onAction = { castViewModel.startDiscovery() }
+                    )
+
+                    DiscoveryState.Idle -> Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 22.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CastConnected,
-                            contentDescription = null,
-                            tint = StreamCastColors.SecondaryCyan,
+                        CircularProgressIndicator(
+                            color = StreamCastColors.PrimaryViolet,
                             modifier = Modifier.size(24.dp)
                         )
                     }
-                    Column {
-                        Text(
-                            text = "Cast to TV Device",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = StreamCastColors.TextPrimary
-                        )
-                        Text(
-                            text = if (connectedDevice != null) "Connected: ${connectedDevice?.name}" else "Select a TV device on your Wi-Fi network",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = StreamCastColors.TextSecondary
-                        )
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { castViewModel.startDiscovery() }) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "Refresh",
-                            tint = StreamCastColors.TextSecondary
-                        )
-                    }
-                    IconButton(onClick = onDismissRequest) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "Close",
-                            tint = StreamCastColors.TextSecondary
-                        )
-                    }
                 }
             }
-
-            // 1. Approval / Permission Rationale Card if missing
-            if (!hasApprovals) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(StreamCastColors.CardSurface)
-                        .border(1.dp, StreamCastColors.PrimaryViolet.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
-                        .padding(16.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (!isWifiConnected) Icons.Rounded.WifiOff else Icons.Rounded.Security,
-                                contentDescription = null,
-                                tint = StreamCastColors.SecondaryCyan,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Column {
-                                Text(
-                                    text = if (!isWifiConnected) "Wi-Fi Connection Required" else "Device Approvals Required",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = StreamCastColors.TextPrimary
-                                )
-                                Text(
-                                    text = if (!isWifiConnected) "Connect to Wi-Fi to find Google TV & Chromecast devices." else "Grant nearby device permission to discover local TV receivers.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = StreamCastColors.TextSecondary
-                                )
-                            }
-                        }
-
-                        Button(
-                            onClick = { launcher.launch(permissionToRequest) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = StreamCastColors.PrimaryViolet)
-                        ) {
-                            Text(
-                                text = "Grant Approvals & Scan Network",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 2. Currently Connected Banner (with prominent Disconnect & Remote buttons)
-            connectedDevice?.let { device ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(StreamCastColors.SurfaceLow)
-                        .border(1.dp, StreamCastColors.LiveGreen.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
-                        .padding(14.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                LivePulseDot()
-                                Column {
-                                    Text(
-                                        text = "CASTING ACTIVE",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = StreamCastColors.LiveGreen
-                                    )
-                                    Text(
-                                        text = device.name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = StreamCastColors.TextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    currentCastingChannel?.let { ch ->
-                                        Text(
-                                            text = "Now Streaming: ${ch.name}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = StreamCastColors.SecondaryCyan,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = { castViewModel.disconnectDevice() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(38.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = StreamCastColors.ErrorContainer)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.PowerSettingsNew,
-                                    contentDescription = null,
-                                    tint = StreamCastColors.OnErrorContainer,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.size(4.dp))
-                                Text(
-                                    text = "Disconnect",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = StreamCastColors.OnErrorContainer
-                                )
-                            }
-
-                            OutlinedButton(
-                                onClick = { onOpenRemote() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(38.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.SettingsRemote,
-                                    contentDescription = null,
-                                    tint = StreamCastColors.SecondaryCyan,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.size(4.dp))
-                                Text("Remote", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = StreamCastColors.SecondaryCyan)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 3. Discovery State & Device List
-            when (val state = discoveryState) {
-                is DiscoveryState.Searching -> {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = StreamCastColors.PrimaryViolet,
-                            strokeWidth = 2.dp
-                        )
-                        Text(
-                            text = "Scanning Wi-Fi network for Chromecast & Google TV...",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = StreamCastColors.TextSecondary
-                        )
-                    }
-                }
-                is DiscoveryState.Found -> {
-                    Text(
-                        text = "Available TV Devices (${state.devices.size})",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = StreamCastColors.TextSecondary
-                    )
-
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(260.dp)
-                    ) {
-                        items(state.devices) { device ->
-                            val isConnected = device.id == connectedDevice?.id
-                            DevicePickerItemRow(
-                                device = device,
-                                isConnected = isConnected,
-                                onConnect = { castViewModel.selectDeviceToCast(device) },
-                                onDisconnect = { castViewModel.disconnectDevice() }
-                            )
-                        }
-                    }
-                }
-                is DiscoveryState.Connecting -> {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = StreamCastColors.SecondaryCyan,
-                            strokeWidth = 2.dp
-                        )
-                        Column {
-                            Text(
-                                text = "Connecting to ${state.device.name}...",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = StreamCastColors.TextPrimary
-                            )
-                            Text(
-                                text = "Launching media session on physical TV",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = StreamCastColors.TextSecondary
-                            )
-                        }
-                    }
-                }
-                is DiscoveryState.Failed -> {
-                    Text(
-                        text = state.reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = StreamCastColors.Error,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                }
-                else -> {}
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
 
 @Composable
-private fun DevicePickerItemRow(
-    device: TvDevice,
-    isConnected: Boolean,
-    onConnect: () -> Unit,
-    onDisconnect: () -> Unit
+private fun DeviceList(
+    devices: List<TvDevice>,
+    connectedId: String?,
+    onConnect: (TvDevice) -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(StreamCastColors.CardSurface)
-            .padding(14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.weight(1f)
-        ) {
-            Box(
+        items(devices, key = { it.id }) { device ->
+            Row(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(
-                        if (isConnected) StreamCastColors.SecondaryContainer.copy(alpha = 0.2f)
-                        else StreamCastColors.SurfaceSecondary
-                    ),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(StreamCastColors.CardSurface)
+                    .clickable { onConnect(device) }
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(
-                    imageVector = if (isConnected) Icons.Rounded.CastConnected else Icons.Rounded.Tv,
-                    contentDescription = null,
-                    tint = if (isConnected) StreamCastColors.SecondaryCyan else StreamCastColors.TextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(StreamCastColors.PrimaryViolet.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center
                 ) {
+                    Icon(
+                        if (device.id == connectedId) {
+                            Icons.Rounded.CastConnected
+                        } else {
+                            Icons.Rounded.Tv
+                        },
+                        contentDescription = null,
+                        tint = StreamCastColors.PrimaryFixedDim,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = device.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = StreamCastColors.TextPrimary,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (isConnected) {
-                        Icon(
-                            imageVector = Icons.Rounded.CheckCircle,
-                            contentDescription = null,
-                            tint = StreamCastColors.LiveGreen,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
+                    Text(
+                        text = device.deviceType,
+                        color = StreamCastColors.TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 Text(
-                    text = "${device.deviceType} • ${device.ipAddress}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = StreamCastColors.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    text = if (device.id == connectedId) "Connected" else "Connect",
+                    color = StreamCastColors.PrimaryFixedDim,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
+    }
+}
 
-        if (isConnected) {
-            Button(
-                onClick = onDisconnect,
-                modifier = Modifier.height(34.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = StreamCastColors.ErrorContainer)
-            ) {
+@Composable
+private fun ConnectedPanel(
+    device: TvDevice,
+    onDisconnect: () -> Unit,
+    onOpenRemote: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(StreamCastColors.PrimaryViolet.copy(alpha = 0.16f))
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                Icons.Rounded.CastConnected,
+                contentDescription = null,
+                tint = StreamCastColors.PrimaryFixedDim,
+                modifier = Modifier.size(22.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Disconnect",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = StreamCastColors.OnErrorContainer
+                    text = device.name,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
                 )
-            }
-        } else {
-            Button(
-                onClick = onConnect,
-                modifier = Modifier.height(34.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = StreamCastColors.PrimaryViolet)
-            ) {
                 Text(
-                    text = "Connect",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    text = "Connected • ${device.deviceType}",
+                    color = StreamCastColors.TextSecondary,
+                    fontSize = 11.sp
                 )
             }
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PillButton(
+                text = "Open remote",
+                onClick = onOpenRemote,
+                modifier = Modifier.weight(1f)
+            )
+            PillButton(
+                text = "Disconnect",
+                onClick = onDisconnect,
+                filled = false,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BlockerPanel(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    message: String,
+    actionLabel: String,
+    onAction: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(StreamCastColors.SurfaceLow)
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = StreamCastColors.TextSecondary,
+            modifier = Modifier.size(28.dp)
+        )
+        Text(
+            text = title,
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp
+        )
+        Text(text = message, color = StreamCastColors.TextSecondary, fontSize = 11.sp)
+        PillButton(
+            text = actionLabel,
+            onClick = onAction,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+        )
     }
 }
