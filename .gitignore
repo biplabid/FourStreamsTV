@@ -1,0 +1,25 @@
+# Node / web
+node_modules/
+dist/
+coverage/
+
+# Gradle / Android
+build/
+.gradle/
+.kotlin/
+local.properties
+*.hprof
+*.apk
+*.aab
+captures/
+
+# IDE
+.idea/
+*.iml
+.aistudio/
+
+# Misc
+.DS_Store
+*.log
+.env*
+!.env.example

@@ -1,0 +1,6 @@
+{
+  "name": "StreamCast",
+  "description": "IPTV Player & Smart TV Remote for live Indian television channels, local HLS playback, TV casting, and Wi-Fi remote control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

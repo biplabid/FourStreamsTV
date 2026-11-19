@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-canvas: #101114;
+  --color-surface-secondary: #1B1D23;
+  --color-card: #242731;
+  --color-border-subtle: #2E323E;
+  --color-violet-accent: #7657FF;
+  --color-cyan-accent: #35C9E8;
+  --color-green-live: #35D07F;
+  --color-text-secondary: #A7A9B2;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background-color: #101114;
+    color: #ffffff;
+    color-scheme: dark;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+/* Hide scrollbars cleanly for horizontal carousels while keeping scroll functional */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
