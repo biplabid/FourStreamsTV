@@ -44,10 +44,12 @@ import com.streamcast.mobile.ui.screens.HomeScreen
 import com.streamcast.mobile.ui.screens.LiveTvScreen
 import com.streamcast.mobile.ui.screens.PlayerScreen
 import com.streamcast.mobile.ui.screens.SettingsScreen
-import com.streamcast.mobile.ui.screens.WifiRemoteScreen
+import com.streamcast.mobile.ui.screens.RemoteScreen
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.CastViewModel
 import com.streamcast.mobile.viewmodel.ChannelsViewModel
+import com.streamcast.mobile.viewmodel.RemoteViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 sealed class StreamCastRoute(val route: String, val label: String) {
     data object Home : StreamCastRoute("home", "Home")
@@ -195,10 +197,12 @@ fun StreamCastNavHost(
             }
 
             composable(StreamCastRoute.Remote.route) {
-                WifiRemoteScreen(
-                    channelsViewModel = channelsViewModel,
-                    castViewModel = castViewModel,
-                    onFindTv = { castViewModel.openCastDialog() }
+                // Scoped to this nav entry, but the TV session itself lives in
+                // AppGraph: switching tabs must not drop the connection.
+                val remoteViewModel: RemoteViewModel = viewModel()
+                RemoteScreen(
+                    remoteViewModel = remoteViewModel,
+                    onFindCastDevice = { castViewModel.openCastDialog() }
                 )
             }
 

@@ -12,6 +12,16 @@
     <!-- Cast playback notification (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      Voice search on the TV. Audio is captured only while the hold-to-talk
+      button is held, and goes to the paired television over the remote
+      protocol - nowhere else, and never to this app's own servers.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+
     <!-- mDNS discovery of Cast receivers on the local network (Android 13+) -->
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"

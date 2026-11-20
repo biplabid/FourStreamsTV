@@ -69,7 +69,7 @@ fun SettingsScreen(channelsViewModel: ChannelsViewModel) {
         // Playlist source
         SettingsCard(title = "Playlist source") {
             Text(
-                text = "StreamCast reads any standard M3U playlist. The default is the " +
+                text = "FourStreamsTV reads any standard M3U playlist. The default is the " +
                     "iptv-org India list.",
                 color = StreamCastColors.TextSecondary,
                 fontSize = 11.sp

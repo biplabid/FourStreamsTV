@@ -9,7 +9,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -17,6 +20,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.streamcast.shared.model.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -73,6 +78,14 @@ class ChannelPreviewController(
         private set
 
     /**
+     * The last channel that never produced a frame. Public playlists are full
+     * of dead links, so callers that pick a channel themselves (the home hero)
+     * can watch this and roll again instead of sitting on a stuck logo.
+     */
+    var failedChannelId: String? by mutableStateOf(null)
+        private set
+
+    /**
      * Must be Compose state, not a plain var. The player is created ~350ms
      * after focus, inside a coroutine. If that assignment does not trigger
      * recomposition the card never re-reads [playerFor], the PlayerView is
@@ -117,6 +130,7 @@ class ChannelPreviewController(
 
         activeChannelId = channel.id
         isRevealed = false
+        failedChannelId = null
         firstFrameRendered.value = false
 
         job = scope.launch {
@@ -142,6 +156,7 @@ class ChannelPreviewController(
             } else {
                 // No frame arrived; drop the decoder rather than hold it open.
                 Log.d(TAG, "no frame from ${channel.name}; keeping logo")
+                failedChannelId = channel.id
                 releasePlayer()
             }
         }
@@ -214,6 +229,37 @@ class ChannelPreviewController(
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                 .build()
     }
+}
+
+/**
+ * The video half of a preview tile.
+ *
+ * Callers draw their own logo on top at the inverse alpha; this renders the
+ * stream underneath. The view is attached for the whole preview, not only once
+ * revealed: the decoder needs a surface before it can produce the first frame
+ * that triggers the dissolve.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+fun PreviewVideoLayer(
+    player: ExoPlayer?,
+    alpha: Float,
+    modifier: Modifier = Modifier
+) {
+    if (player == null) return
+    AndroidView(
+        modifier = modifier.alpha(alpha),
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                useController = false
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                setKeepContentOnPlayerReset(true)
+            }
+        },
+        update = { view -> view.player = player },
+        onRelease = { view -> view.player = null }
+    )
 }
 
 /**

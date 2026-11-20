@@ -31,11 +31,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,11 +49,15 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.util.UnstableApi
-import com.streamcast.mobile.ui.preview.rememberChannelPreviewController
+import com.streamcast.mobile.ui.preview.MAX_VISIBLE_PREVIEWS
+import com.streamcast.mobile.ui.preview.rememberChannelPreviewPool
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.CastViewModel
 import com.streamcast.mobile.viewmodel.ChannelsViewModel
 import com.streamcast.shared.model.ChannelCategory
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlin.math.abs
 
 @OptIn(UnstableApi::class)
@@ -79,41 +83,44 @@ fun LiveTvScreen(
 
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
-    val previewController = rememberChannelPreviewController(scope)
-
-    /**
-     * "In focus" on a touch screen means the card sitting closest to the middle
-     * of the viewport - there is no D-pad focus to borrow. derivedStateOf keeps
-     * this off the recomposition path for every scroll pixel.
-     */
-    val focusedChannel by remember(filtered) {
-        derivedStateOf {
-            val info = gridState.layoutInfo
-            if (info.visibleItemsInfo.isEmpty()) {
-                null
-            } else {
-                val viewportCentre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
-                val nearest = info.visibleItemsInfo.minByOrNull { item ->
-                    abs(item.offset.y + item.size.height / 2f - viewportCentre)
-                }
-                nearest?.index?.let(filtered::getOrNull)
-            }
-        }
-    }
+    val previewPool = rememberChannelPreviewPool(scope)
 
     // Previews are pointless while casting (the TV is the screen that matters)
     // and are the single most data-hungry thing the app does, so they are opt-out.
     val previewsAllowed = settings.livePreviews && isGridView && connectedDevice == null
 
-    LaunchedEffect(focusedChannel?.id, previewsAllowed) {
-        previewController.focus(if (previewsAllowed) focusedChannel else null)
+    /**
+     * Every card on screen previews, and scrolling hands the players to whatever
+     * scrolls in. Ordered by distance from the viewport centre so that when more
+     * cards are partially visible than the decoder budget allows, the middle of
+     * the screen wins rather than a sliver at the edge.
+     *
+     * snapshotFlow keeps this off the recomposition path, and the debounce means
+     * a fling across fifty cards starts nothing until it settles.
+     */
+    LaunchedEffect(gridState, filtered, previewsAllowed) {
+        if (!previewsAllowed) {
+            previewPool.clear()
+            return@LaunchedEffect
+        }
+        snapshotFlow { gridState.layoutInfo }
+            .map { info ->
+                val centre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+                info.visibleItemsInfo
+                    .sortedBy { abs(it.offset.y + it.size.height / 2f - centre) }
+                    .mapNotNull { filtered.getOrNull(it.index) }
+                    .take(MAX_VISIBLE_PREVIEWS)
+            }
+            .distinctUntilChanged { old, new -> old.map { it.id } == new.map { it.id } }
+            .debounce(SCROLL_SETTLE_MS)
+            .collect { visible -> previewPool.setVisible(visible) }
     }
 
-    // Never leave a decoder running behind a backgrounded app.
+    // Never leave decoders running behind a backgrounded app.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) previewController.stop()
+            if (event == Lifecycle.Event.ON_STOP) previewPool.clear()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -237,9 +244,8 @@ fun LiveTvScreen(
                             onClick = { onOpenPlayer(channel.id) },
                             onCast = { castViewModel.castChannel(channel) },
                             onToggleFavourite = { channelsViewModel.toggleFavourite(channel.id) },
-                            previewPlayer = previewController.playerFor(channel.id),
-                            previewRevealed = previewController.isRevealed &&
-                                previewController.activeChannelId == channel.id
+                            previewPlayer = previewPool.playerFor(channel.id),
+                            previewRevealed = previewPool.isRevealed(channel.id)
                         )
                     }
                 }
@@ -296,3 +302,10 @@ private fun IconToggle(
         }
     }
 }
+
+/**
+ * How long scrolling must settle before previews commit to the visible set.
+ * A fling crosses dozens of cards; starting players for each would thrash the
+ * decoders and achieve nothing visible.
+ */
+private const val SCROLL_SETTLE_MS = 400L

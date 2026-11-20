@@ -57,12 +57,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.streamcast.mobile.ui.preview.PreviewVideoLayer
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.shared.model.Channel
 import com.streamcast.shared.model.ChannelCategory
@@ -449,24 +447,11 @@ fun ChannelGridCard(
                 .aspectRatio(16f / 9f)
                 .background(StreamCastColors.SurfaceLow)
         ) {
-            // Attached for the whole preview, not just the visible part: the
-            // decoder needs a surface to render into before onRenderedFirstFrame
-            // can fire, which is the signal that starts the dissolve.
-            if (previewPlayer != null) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize().alpha(videoAlpha),
-                    factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            useController = false
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                            setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                            setKeepContentOnPlayerReset(true)
-                        }
-                    },
-                    update = { view -> view.player = previewPlayer },
-                    onRelease = { view -> view.player = null }
-                )
-            }
+            PreviewVideoLayer(
+                player = previewPlayer,
+                alpha = videoAlpha,
+                modifier = Modifier.fillMaxSize()
+            )
 
             ChannelLogo(
                 channel = channel,

@@ -1,29 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  FourStreamsTV launcher mark.
+
+  Four streams converge on one destination: the four sources the app pulls
+  together, arriving at one screen. Geometry is scaled to sit inside the 66dp
+  safe circle at the centre of the 108dp adaptive viewport, so no mask - circle,
+  squircle or teardrop - can clip it.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- TV panel -->
+
     <path
-        android:fillColor="#7657FF"
-        android:pathData="M34,38 h44 a4,4 0 0 1 4,4 v26 a4,4 0 0 1 -4,4 h-44 a4,4 0 0 1 -4,-4 v-26 a4,4 0 0 1 4,-4 z" />
-    <!-- Screen inset -->
+        android:pathData="M31,37.6 Q55.6,37.6 65.5,51.5"
+        android:strokeColor="#7657FF"
+        android:strokeWidth="5.7"
+        android:strokeLineCap="round" />
     <path
-        android:fillColor="#17181D"
-        android:pathData="M36,44 h40 v22 h-40 z" />
-    <!-- Cast waves -->
+        android:pathData="M31,47.4 Q54.8,47.4 65.5,52.8"
+        android:strokeColor="#9A72FF"
+        android:strokeWidth="5.7"
+        android:strokeLineCap="round" />
     <path
-        android:fillColor="#38E0C8"
-        android:pathData="M41,61 h5 a5,5 0 0 0 -5,-5 z" />
+        android:pathData="M31,60.6 Q54.8,60.6 65.5,55.2"
+        android:strokeColor="#4AD7F6"
+        android:strokeWidth="5.7"
+        android:strokeLineCap="round" />
     <path
-        android:fillColor="#38E0C8"
-        android:pathData="M41,53.5 a9.5,9.5 0 0 1 9.5,9.5 h-3.2 a6.3,6.3 0 0 0 -6.3,-6.3 z" />
+        android:pathData="M31,70.4 Q55.6,70.4 65.5,56.5"
+        android:strokeColor="#4AE08D"
+        android:strokeWidth="5.7"
+        android:strokeLineCap="round" />
+
+    <!-- The destination the streams land on. -->
     <path
-        android:fillColor="#38E0C8"
-        android:pathData="M41,47.5 a15.5,15.5 0 0 1 15.5,15.5 h-3.2 a12.3,12.3 0 0 0 -12.3,-12.3 z" />
-    <!-- Stand -->
-    <path
-        android:fillColor="#7657FF"
-        android:pathData="M48,74 h12 v3 h-12 z" />
+        android:pathData="M67.5,54 a6.2,6.2 0 1,0 12.4,0 a6.2,6.2 0 1,0 -12.4,0 z"
+        android:fillColor="#F2F1F6" />
 </vector>
