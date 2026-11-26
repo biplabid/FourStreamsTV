@@ -3,6 +3,7 @@ package com.streamcast.mobile
 import android.content.Context
 import com.streamcast.mobile.atv.AtvRemoteController
 import com.streamcast.mobile.cast.AndroidCastAndRemoteManager
+import com.streamcast.mobile.mirror.MirrorController
 import com.streamcast.shared.data.PlaylistRepository
 import com.streamcast.shared.data.UserPreferences
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +65,21 @@ object AppGraph {
                 packageName = context.applicationContext.packageName,
                 appVersion = APP_VERSION
             ).also { atvRemote = it }
+        }
+
+    @Volatile
+    private var mirror: MirrorController? = null
+
+    /**
+     * Screen mirroring to non-Cast televisions.
+     *
+     * Shared because it registers a DisplayManager listener and owns the one
+     * window shown on the television: a second instance would fight the first
+     * for the same display.
+     */
+    fun mirror(context: Context): MirrorController =
+        mirror ?: synchronized(this) {
+            mirror ?: MirrorController(context.applicationContext).also { mirror = it }
         }
 
     /** Reported to the TV during the remote handshake. */

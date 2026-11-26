@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.CastConnected
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.automirrored.rounded.ScreenShare
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.WifiOff
@@ -32,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +44,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.streamcast.mobile.AppGraph
+import com.streamcast.mobile.mirror.ExternalDisplay
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.CastViewModel
 import com.streamcast.shared.model.DiscoveryState
@@ -67,6 +71,11 @@ fun CastDevicePickerModal(
     val hasPermission by castViewModel.hasDiscoveryPermission.collectAsState()
     val isWifiConnected by castViewModel.isWifiConnected.collectAsState()
 
+    // Mirroring is a separate path to a separate class of television, so it
+    // has its own state and is never mixed into the Cast device list.
+    val mirror = remember { AppGraph.mirror(context) }
+    val mirroringTo by mirror.externalDisplay.collectAsState()
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -75,6 +84,7 @@ fun CastDevicePickerModal(
 
     LaunchedEffect(Unit) {
         castViewModel.refreshEnvironment(context)
+        mirror.refresh()
     }
 
     LaunchedEffect(hasPermission, isWifiConnected) {
@@ -226,7 +236,90 @@ fun CastDevicePickerModal(
                     }
                 }
             }
+
+            MirrorToTvRow(
+                mirroringTo = mirroringTo,
+                onOpenPanel = { mirror.openSystemPanel(context) }
+            )
         }
+    }
+}
+
+/**
+ * The way out for televisions that have no Cast receiver.
+ *
+ * A Panasonic Viera, an older Samsung or LG, a Philips - none of these run a
+ * Cast receiver, so they will never appear in the list above however long it
+ * scans. Putting this here means the answer is in front of the user at the
+ * exact moment the list comes back empty, instead of in a support article.
+ */
+@Composable
+private fun MirrorToTvRow(
+    mirroringTo: ExternalDisplay?,
+    onOpenPanel: () -> Unit
+) {
+    val active = mirroringTo != null
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (active) {
+                    StreamCastColors.SecondaryCyan.copy(alpha = 0.14f)
+                } else {
+                    StreamCastColors.SurfaceLow
+                }
+            )
+            .clickable(onClick = onOpenPanel)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(StreamCastColors.SecondaryCyan.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.AutoMirrored.Rounded.ScreenShare,
+                contentDescription = null,
+                tint = StreamCastColors.SecondaryCyan,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = if (active) {
+                    "Mirroring to ${mirroringTo!!.name}"
+                } else {
+                    "TV without Cast? Mirror instead"
+                },
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = if (active) {
+                    "Playing full screen at ${mirroringTo!!.resolutionLabel}"
+                } else {
+                    "Panasonic, LG, Sony, Philips - anything with Screen Mirroring"
+                },
+                color = StreamCastColors.TextSecondary,
+                fontSize = 11.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Text(
+            text = if (active) "Change" else "Set up",
+            color = StreamCastColors.SecondaryCyan,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp
+        )
     }
 }
 

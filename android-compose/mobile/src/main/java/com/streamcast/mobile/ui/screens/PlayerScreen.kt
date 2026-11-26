@@ -1,6 +1,10 @@
 package com.streamcast.mobile.ui.screens
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +34,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.automirrored.rounded.ScreenShare
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
@@ -56,6 +61,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.streamcast.mobile.AppGraph
+import com.streamcast.mobile.mirror.ExternalDisplay
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
@@ -88,6 +95,12 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Screen mirroring to a TV that has no Cast receiver.
+    val mirror = remember { AppGraph.mirror(context) }
+    val activity = remember(context) { context.findActivity() }
+    val externalDisplay by mirror.externalDisplay.collectAsState()
+    val mirrorError by mirror.lastError.collectAsState()
 
     val playlist by channelsViewModel.playlist.collectAsState()
     val favouriteIds by channelsViewModel.favouriteIds.collectAsState()
@@ -163,9 +176,36 @@ fun PlayerScreen(
         }
     }
 
+    /*
+     * Hand the picture to the television.
+     *
+     * Only possible while we still own the decoder: when Cast has the stream
+     * there is no local player, and the TV is being fed directly anyway.
+     */
+    val isMirroring = externalDisplay != null && exoPlayer != null
+
+    DisposableEffect(externalDisplay, exoPlayer, activity) {
+        mirror.present(activity, exoPlayer)
+        onDispose { mirror.dismiss() }
+    }
+
+    // Wi-Fi Display dies with the phone's screen, so the picture on the TV
+    // depends on this flag staying set for as long as we are mirroring.
+    DisposableEffect(isMirroring, activity) {
+        val window = activity?.window
+        if (isMirroring) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
+
     // Pause when the app goes to the background; keep casting running.
-    DisposableEffect(lifecycleOwner, exoPlayer) {
+    DisposableEffect(lifecycleOwner, exoPlayer, isMirroring) {
         val observer = LifecycleEventObserver { _, event ->
+            // The point of putting the picture on a TV is that the phone has
+            // stopped being the screen, so leaving the app must not stop
+            // playback the way it does for local viewing.
+            if (isMirroring) return@LifecycleEventObserver
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> exoPlayer?.pause()
                 Lifecycle.Event.ON_STOP -> exoPlayer?.playWhenReady = false
@@ -214,6 +254,14 @@ fun PlayerScreen(
                             retryToken++
                         },
                         onCast = { castViewModel.castChannel(channel) }
+                    )
+
+                    isMirroring -> MirroringSurface(
+                        channel = channel,
+                        display = externalDisplay!!,
+                        isBuffering = isBuffering,
+                        error = mirrorError,
+                        onOpenPanel = { mirror.openSystemPanel(context) }
                     )
 
                     else -> {
@@ -588,4 +636,82 @@ private fun describePlaybackError(error: PlaybackException): String = when (erro
         "This device cannot decode this stream."
 
     else -> error.localizedMessage ?: "Playback failed (code ${error.errorCode})."
+}
+
+/**
+ * What the phone shows while the picture is on a mirrored television.
+ *
+ * Deliberately not a video view. The player has exactly one video surface and
+ * it is on the TV; a second surface here would take it straight back off
+ * again. So the phone shows state and gets out of the way.
+ */
+@Composable
+private fun MirroringSurface(
+    channel: Channel,
+    display: ExternalDisplay,
+    isBuffering: Boolean,
+    error: String?,
+    onOpenPanel: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            Icons.AutoMirrored.Rounded.ScreenShare,
+            contentDescription = null,
+            tint = StreamCastColors.SecondaryCyan,
+            modifier = Modifier.size(38.dp)
+        )
+        Text(
+            text = "${channel.name} on ${display.name}",
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 10.dp)
+        )
+        Text(
+            text = error ?: "Full screen at ${display.resolutionLabel}. " +
+                "Your phone is free - it is not being copied to the TV.",
+            color = if (error != null) StreamCastColors.Error else StreamCastColors.TextSecondary,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(top = 4.dp, start = 12.dp, end = 12.dp)
+        )
+        if (isBuffering) {
+            CircularProgressIndicator(
+                color = StreamCastColors.SecondaryCyan,
+                strokeWidth = 2.dp,
+                modifier = Modifier.padding(top = 12.dp).size(20.dp)
+            )
+        }
+        Text(
+            text = "Mirroring settings",
+            color = StreamCastColors.PrimaryFixedDim,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .padding(top = 14.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onOpenPanel)
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+        )
+    }
+}
+
+/**
+ * The Activity behind a Compose [Context].
+ *
+ * A [android.app.Presentation] is a Dialog, and a Dialog needs a real
+ * Activity window token - the application context throws BadTokenException.
+ */
+private fun Context.findActivity(): Activity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
