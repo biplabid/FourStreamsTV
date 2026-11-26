@@ -36,6 +36,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.streamcast.mobile.ui.adaptive.LocalWindowLayout
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.ChannelsViewModel
 import com.streamcast.shared.data.PlaylistRepository
@@ -52,21 +53,10 @@ fun SettingsScreen(channelsViewModel: ChannelsViewModel) {
 
     var urlDraft by remember(settings.playlistUrl) { mutableStateOf(settings.playlistUrl) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(
-            text = "Settings",
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = 20.sp
-        )
+    val windowLayout = LocalWindowLayout.current
 
-        // Playlist source
+    // Playlist source
+    val sourceCard: @Composable () -> Unit = {
         SettingsCard(title = "Playlist source") {
             Text(
                 text = "FourStreamsTV reads any standard M3U playlist. The default is the " +
@@ -121,7 +111,10 @@ fun SettingsScreen(channelsViewModel: ChannelsViewModel) {
             )
         }
 
-        // Playlist status
+    }
+
+    // Playlist status
+    val statusCard: @Composable () -> Unit = {
         SettingsCard(title = "Playlist status") {
             StatusRow("Channels loaded", playlist.channels.size.toString())
             StatusRow(
@@ -152,7 +145,10 @@ fun SettingsScreen(channelsViewModel: ChannelsViewModel) {
             )
         }
 
-        // Playback
+    }
+
+    // Playback
+    val playbackCard: @Composable () -> Unit = {
         SettingsCard(title = "Playback") {
             SettingsToggle(
                 title = "Autoplay on open",
@@ -189,7 +185,10 @@ fun SettingsScreen(channelsViewModel: ChannelsViewModel) {
             )
         }
 
-        // Library
+    }
+
+    // Library
+    val libraryCard: @Composable () -> Unit = {
         SettingsCard(title = "Your library") {
             StatusRow("Favourites saved", favouriteIds.size.toString())
             PillButton(
@@ -200,7 +199,10 @@ fun SettingsScreen(channelsViewModel: ChannelsViewModel) {
             )
         }
 
-        // About
+    }
+
+    // About
+    val aboutCard: @Composable () -> Unit = {
         SettingsCard(title = "About") {
             StatusRow("Version", "1.0")
             StatusRow("Cast receiver", "Default Media Receiver")
@@ -214,6 +216,52 @@ fun SettingsScreen(channelsViewModel: ChannelsViewModel) {
                 "Electronic programme guide data is not available: M3U playlists carry no " +
                     "schedule information."
             )
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = windowLayout.gutter, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(
+            text = "Settings",
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 20.sp
+        )
+
+        if (windowLayout.isCompact) {
+            sourceCard()
+            statusCard()
+            playbackCard()
+            libraryCard()
+            aboutCard()
+        } else {
+            // Two columns on a tablet: one stretched card per row would leave
+            // each line of text a full screen wide.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    sourceCard()
+                    statusCard()
+                    libraryCard()
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    playbackCard()
+                    aboutCard()
+                }
+            }
         }
     }
 }

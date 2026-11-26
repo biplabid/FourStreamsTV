@@ -22,12 +22,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -78,6 +80,7 @@ import com.streamcast.mobile.atv.AtvDevice
 import com.streamcast.mobile.atv.AtvSessionState
 import com.streamcast.mobile.atv.PairingPhase
 import com.streamcast.mobile.atv.VoiceState
+import com.streamcast.mobile.ui.adaptive.LocalWindowLayout
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.RemoteViewModel
 import com.streamcast.shared.atv.AtvAppLink
@@ -163,14 +166,18 @@ fun RemoteScreen(
         if (textFieldLabel != null && ready) showKeyboard = true
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-            .padding(top = 16.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    val windowLayout = LocalWindowLayout.current
+
+    // Explicitly typed: the ViewModel's send methods return Unit? because
+    // they go through a nullable session, which would otherwise infer a
+    // () -> Unit? that no callback parameter accepts.
+    val longPressCentre: () -> Unit = {
+        remoteViewModel.beginLongPress(AtvKey.DPAD_CENTER)
+        remoteViewModel.endLongPress(AtvKey.DPAD_CENTER)
+    }
+
+    // Connection state and the pointing surface.
+    val padSection: @Composable () -> Unit = {
         RemoteHeader(
             device = activeDevice,
             sessionState = sessionState,
@@ -202,37 +209,33 @@ fun RemoteScreen(
             onSelect = { useTrackpad = it }
         )
 
-        // Explicitly typed: the ViewModel's send methods return Unit? because
-        // they go through a nullable session, which would otherwise infer a
-        // () -> Unit? that no callback parameter accepts.
-        val longPressCentre: () -> Unit = {
-            remoteViewModel.beginLongPress(AtvKey.DPAD_CENTER)
-            remoteViewModel.endLongPress(AtvKey.DPAD_CENTER)
-        }
-
+        // Capped so a tablet does not get a pad the size of a dinner plate,
+        // which is slower to use, not faster.
+        val padModifier = Modifier.widthIn(max = MAX_PAD_WIDTH).fillMaxWidth()
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         if (useTrackpad) {
             TrackpadSurface(
                 enabled = ready,
                 onDirection = remoteViewModel::key,
                 onSelect = { remoteViewModel.key(AtvKey.DPAD_CENTER) },
                 onLongSelect = longPressCentre,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1.08f)
+                modifier = padModifier.aspectRatio(1.08f)
             )
         } else {
             DpadSurface(
                 enabled = ready,
                 onKey = remoteViewModel::key,
                 onLongSelect = longPressCentre,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
+                modifier = padModifier.aspectRatio(1f)
             )
+        }
         }
 
         NavigationRow(enabled = ready, onKey = remoteViewModel::key)
+    }
 
+    // Everything that is a button rather than a gesture.
+    val buttonSection: @Composable () -> Unit = {
         InputRow(
             enabled = ready,
             onSearch = { remoteViewModel.key(AtvKey.SEARCH) },
@@ -271,6 +274,50 @@ fun RemoteScreen(
 
         SectionLabel("Channel")
         ChannelPad(enabled = ready, onKey = remoteViewModel::key)
+    }
+
+    if (windowLayout.useTwoPane) {
+        // Landscape: pad on one side, buttons on the other, each scrolling on
+        // its own so the pad never scrolls away mid-gesture.
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = windowLayout.gutter),
+            horizontalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 16.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) { padSection() }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 16.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) { buttonSection() }
+        }
+    } else {
+        // Portrait: one column, held to a remote-like width on a tablet.
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = MAX_SINGLE_COLUMN_WIDTH)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = windowLayout.gutter)
+                    .padding(top = 16.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                padSection()
+                buttonSection()
+            }
+        }
     }
 
     if (showKeyboard) {
@@ -324,6 +371,12 @@ fun RemoteScreen(
         )
     }
 }
+
+/** Largest the touchpad / D-pad grows to on a big screen. */
+private val MAX_PAD_WIDTH = 440.dp
+
+/** Widest the single-column remote gets on a portrait tablet. */
+private val MAX_SINGLE_COLUMN_WIDTH = 600.dp
 
 // ------------------------------------------------------------------ header
 

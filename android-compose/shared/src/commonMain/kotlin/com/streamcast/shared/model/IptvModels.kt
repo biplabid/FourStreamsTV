@@ -41,7 +41,13 @@ data class Channel(
     val quality: String? = null,
     val isLive: Boolean = true,
     val isGeoRestricted: Boolean = false,
-    val epgAvailable: Boolean = false
+    val epgAvailable: Boolean = false,
+    /**
+     * The playlist's tvg-id, e.g. "DDNational.in@HD". The part before '@' is
+     * the iptv-org channel id, which is how guide data and channel metadata
+     * are matched back to a stream.
+     */
+    val tvgId: String? = null
 )
 
 enum class CastProtocol(val label: String) {

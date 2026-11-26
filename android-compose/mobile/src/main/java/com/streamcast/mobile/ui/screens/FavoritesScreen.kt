@@ -7,8 +7,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material3.Text
@@ -20,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.streamcast.mobile.ui.adaptive.LocalWindowLayout
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.CastViewModel
 import com.streamcast.mobile.viewmodel.ChannelsViewModel
@@ -34,9 +36,11 @@ fun FavoritesScreen(
     val favourites by channelsViewModel.favouriteChannels.collectAsState()
     val favouriteIds by channelsViewModel.favouriteIds.collectAsState()
     val playlist by channelsViewModel.playlist.collectAsState()
+    val windowLayout = LocalWindowLayout.current
+    val gutter = windowLayout.gutter
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(horizontal = gutter, vertical = 16.dp)) {
             Text(
                 text = "Favourites",
                 color = Color.White,
@@ -56,7 +60,7 @@ fun FavoritesScreen(
         }
 
         if (favourites.isEmpty()) {
-            Box(modifier = Modifier.padding(16.dp)) {
+            Box(modifier = Modifier.padding(gutter)) {
                 StatePlaceholder(
                     title = if (favouriteIds.isEmpty()) {
                         "No favourites yet"
@@ -77,9 +81,11 @@ fun FavoritesScreen(
             return
         }
 
-        LazyColumn(
+        LazyVerticalGrid(
+            columns = if (windowLayout.isCompact) GridCells.Fixed(1) else GridCells.Adaptive(300.dp),
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            contentPadding = PaddingValues(start = gutter, end = gutter, bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(favourites, key = { it.id }) { channel ->

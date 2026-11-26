@@ -2,6 +2,7 @@ package com.streamcast.mobile.ui.preview
 
 import android.content.Context
 import android.media.MediaCodecList
+import android.net.ConnectivityManager
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -91,7 +92,7 @@ internal fun createPreviewPlayer(
  * gracefully - allocation throws and tiles die in a heap. Headroom is reserved
  * for the foreground player and anything else on the device holding a decoder.
  */
-internal fun deviceVideoDecoderBudget(): Int {
+internal fun deviceVideoDecoderBudget(context: Context): Int {
     val reported = runCatching {
         MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
             .asSequence()
@@ -108,17 +109,41 @@ internal fun deviceVideoDecoderBudget(): Int {
             .maxOrNull()
     }.getOrNull() ?: DEFAULT_DECODER_ESTIMATE
 
-    val budget = min(MAX_VISIBLE_PREVIEWS, (reported - DECODER_HEADROOM)).coerceAtLeast(1)
-    Log.d(POOL_TAG, "decoder instances reported=$reported, preview budget=$budget")
+    // On mobile data every extra tile is a live stream billed to the user, so
+    // the generous budget is reserved for Wi-Fi and other unmetered networks.
+    val metered = runCatching {
+        (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
+            .isActiveNetworkMetered
+    }.getOrDefault(true)
+    val ceiling = if (metered) METERED_PREVIEW_CEILING else MAX_VISIBLE_PREVIEWS
+
+    val budget = min(ceiling, (reported - DECODER_HEADROOM)).coerceAtLeast(1)
+    Log.d(POOL_TAG, "decoder instances reported=$reported, metered=$metered, preview budget=$budget")
     return budget
 }
 
 private const val POOL_TAG = "StreamCastPool"
 private const val DEFAULT_DECODER_ESTIMATE = 6
-private const val DECODER_HEADROOM = 2
+/**
+ * Decoders left free for the full player, the Home hero and the system. Two
+ * proved too few: with the pool at 30 of 32, opening a channel made the
+ * platform reclaim a decoder out from under a running preview.
+ */
+private const val DECODER_HEADROOM = 4
 
-/** Ceiling regardless of what the hardware claims; six tiles fill the screen. */
-const val MAX_VISIBLE_PREVIEWS = 6
+/**
+ * Ceiling regardless of what the hardware claims. HLS itself sets no limit on
+ * concurrent streams; the practical limits are hardware decoder instances
+ * (32 on a Tab S11 Ultra, so 28 after headroom), memory and bandwidth. 28
+ * covers every card a landscape tablet shows at once (7 x 4).
+ */
+const val MAX_VISIBLE_PREVIEWS = 28
+
+/** On metered networks, previews stay at the old conservative level. */
+private const val METERED_PREVIEW_CEILING = 6
+
+/** Above this many tiles, each drops to a lighter rendition. */
+private const val LIGHT_TILE_THRESHOLD = 8
 
 /**
  * Runs a live preview on every card currently in view.
@@ -137,8 +162,16 @@ const val MAX_VISIBLE_PREVIEWS = 6
 class ChannelPreviewPool(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val budget: Int
+    /** Most previews this device runs at once. */
+    val budget: Int
 ) {
+
+    // Many small tiles at once: ask for a lighter rendition per tile so the
+    // total bitrate and decode load stay sane.
+    private val light = budget > LIGHT_TILE_THRESHOLD
+    private val tileWidth = if (light) 426 else TILE_WIDTH
+    private val tileHeight = if (light) 240 else TILE_HEIGHT
+    private val tileBitrate = if (light) 700_000 else TILE_BITRATE
 
     private inner class Slot(val channel: Channel) {
         var player: ExoPlayer? by mutableStateOf(null)
@@ -163,7 +196,7 @@ class ChannelPreviewPool(
                 delay(SETTLE_MS + staggerIndex * STAGGER_MS)
 
                 val exo = runCatching {
-                    createPreviewPlayer(context, TILE_WIDTH, TILE_HEIGHT, TILE_BITRATE)
+                    createPreviewPlayer(context, tileWidth, tileHeight, tileBitrate)
                 }.getOrElse { error ->
                     // Decoder exhaustion lands here. One tile stays on its logo
                     // rather than taking the whole grid down.
@@ -248,7 +281,7 @@ class ChannelPreviewPool(
 
     private companion object {
         const val SETTLE_MS = 350L
-        const val STAGGER_MS = 180L
+        const val STAGGER_MS = 110L
         const val LOGO_DWELL_MS = 5_000L
         const val FIRST_FRAME_TIMEOUT_MS = 12_000L
 
@@ -264,7 +297,7 @@ class ChannelPreviewPool(
 fun rememberChannelPreviewPool(scope: CoroutineScope): ChannelPreviewPool {
     val context = LocalContext.current
     val pool = remember(context) {
-        ChannelPreviewPool(context, scope, deviceVideoDecoderBudget())
+        ChannelPreviewPool(context, scope, deviceVideoDecoderBudget(context))
     }
     DisposableEffect(pool) {
         onDispose { pool.clear() }

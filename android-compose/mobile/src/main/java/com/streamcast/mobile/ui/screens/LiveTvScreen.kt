@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -49,7 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.util.UnstableApi
-import com.streamcast.mobile.ui.preview.MAX_VISIBLE_PREVIEWS
+import com.streamcast.mobile.ui.adaptive.LocalWindowLayout
 import com.streamcast.mobile.ui.preview.rememberChannelPreviewPool
 import com.streamcast.mobile.ui.theme.StreamCastColors
 import com.streamcast.mobile.viewmodel.CastViewModel
@@ -66,7 +65,8 @@ fun LiveTvScreen(
     channelsViewModel: ChannelsViewModel,
     castViewModel: CastViewModel,
     initialCategoryName: String?,
-    onOpenPlayer: (String) -> Unit
+    onOpenPlayer: (String) -> Unit,
+    onOpenFullscreen: (String) -> Unit
 ) {
     val playlist by channelsViewModel.playlist.collectAsState()
     val filtered by channelsViewModel.filteredChannels.collectAsState()
@@ -81,13 +81,34 @@ fun LiveTvScreen(
 
     var isGridView by rememberSaveable { mutableStateOf(true) }
 
+    val windowLayout = LocalWindowLayout.current
+    val gutter = windowLayout.gutter
+    // Two fixed columns on a phone; wider windows fit as many ~200dp cards as
+    // they have room for (3 on a tablet in portrait, 5 in landscape).
+    val gridColumns = if (windowLayout.isCompact) GridCells.Fixed(2) else GridCells.Adaptive(200.dp)
+
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val previewPool = rememberChannelPreviewPool(scope)
 
     // Previews are pointless while casting (the TV is the screen that matters)
     // and are the single most data-hungry thing the app does, so they are opt-out.
-    val previewsAllowed = settings.livePreviews && isGridView && connectedDevice == null
+    // Set when a channel is being opened. Every preview decoder is released
+    // *before* navigating, so the player is never left competing with dozens
+    // of previews for hardware decoders during the screen transition.
+    var leaving by remember { mutableStateOf(false) }
+    val previewsAllowed = settings.livePreviews && isGridView && connectedDevice == null && !leaving
+
+    val openPlayer: (String) -> Unit = { id ->
+        leaving = true
+        previewPool.clear()
+        onOpenPlayer(id)
+    }
+    val openFullscreen: (String) -> Unit = { id ->
+        leaving = true
+        previewPool.clear()
+        onOpenFullscreen(id)
+    }
 
     /**
      * Every card on screen previews, and scrolling hands the players to whatever
@@ -106,10 +127,18 @@ fun LiveTvScreen(
         snapshotFlow { gridState.layoutInfo }
             .map { info ->
                 val centre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+                val centreX = info.viewportSize.width / 2f
+                // Rows first, then columns: with several columns on a tablet the
+                // whole middle row is equally close vertically.
                 info.visibleItemsInfo
-                    .sortedBy { abs(it.offset.y + it.size.height / 2f - centre) }
+                    .sortedWith(
+                        compareBy(
+                            { abs(it.offset.y + it.size.height / 2f - centre) },
+                            { abs(it.offset.x + it.size.width / 2f - centreX) }
+                        )
+                    )
                     .mapNotNull { filtered.getOrNull(it.index) }
-                    .take(MAX_VISIBLE_PREVIEWS)
+                    .take(previewPool.budget)
             }
             .distinctUntilChanged { old, new -> old.map { it.id } == new.map { it.id } }
             .debounce(SCROLL_SETTLE_MS)
@@ -135,7 +164,7 @@ fun LiveTvScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 10.dp),
+            modifier = Modifier.padding(start = gutter, end = gutter, top = 16.dp, bottom = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -202,7 +231,7 @@ fun LiveTvScreen(
             }
 
             filtered.isEmpty() -> {
-                Box(modifier = Modifier.padding(16.dp)) {
+                Box(modifier = Modifier.padding(gutter)) {
                     StatePlaceholder(
                         title = if (playlist.channels.isEmpty()) {
                             "No channels loaded"
@@ -232,8 +261,8 @@ fun LiveTvScreen(
             isGridView -> {
                 LazyVerticalGrid(
                     state = gridState,
-                    columns = GridCells.Fixed(2),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                    columns = gridColumns,
+                    contentPadding = PaddingValues(start = gutter, end = gutter, bottom = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -241,26 +270,31 @@ fun LiveTvScreen(
                         ChannelGridCard(
                             channel = channel,
                             isFavourite = favouriteIds.contains(channel.id),
-                            onClick = { onOpenPlayer(channel.id) },
+                            onClick = { openPlayer(channel.id) },
                             onCast = { castViewModel.castChannel(channel) },
                             onToggleFavourite = { channelsViewModel.toggleFavourite(channel.id) },
                             previewPlayer = previewPool.playerFor(channel.id),
-                            previewRevealed = previewPool.isRevealed(channel.id)
+                            previewRevealed = previewPool.isRevealed(channel.id),
+                            onFullscreen = { openFullscreen(channel.id) }
                         )
                     }
                 }
             }
 
             else -> {
-                LazyColumn(
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                // A single column of rows on a phone; side-by-side rows on a
+                // tablet, where one full-width row would be mostly empty space.
+                LazyVerticalGrid(
+                    columns = if (windowLayout.isCompact) GridCells.Fixed(1) else GridCells.Adaptive(300.dp),
+                    contentPadding = PaddingValues(start = gutter, end = gutter, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(filtered, key = { it.id }) { channel ->
                         ChannelListRow(
                             channel = channel,
                             isFavourite = favouriteIds.contains(channel.id),
-                            onClick = { onOpenPlayer(channel.id) },
+                            onClick = { openPlayer(channel.id) },
                             onCast = { castViewModel.castChannel(channel) },
                             onToggleFavourite = { channelsViewModel.toggleFavourite(channel.id) }
                         )

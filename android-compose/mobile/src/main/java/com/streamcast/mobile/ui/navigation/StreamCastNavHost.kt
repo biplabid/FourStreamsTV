@@ -2,6 +2,16 @@ package com.streamcast.mobile.ui.navigation
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.runtime.CompositionLocalProvider
+import com.streamcast.mobile.ui.adaptive.LocalWindowLayout
+import com.streamcast.mobile.ui.adaptive.rememberWindowLayout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,7 +67,7 @@ sealed class StreamCastRoute(val route: String, val label: String) {
     data object Favorites : StreamCastRoute("favorites", "Favourites")
     data object Remote : StreamCastRoute("remote", "Remote")
     data object Settings : StreamCastRoute("settings", "Settings")
-    data object Player : StreamCastRoute("player/{channelId}", "Player")
+    data object Player : StreamCastRoute("player/{channelId}?fullscreen={fullscreen}", "Player")
 }
 
 @Composable
@@ -99,6 +109,21 @@ fun StreamCastNavHost(
 
     val isPrimaryTab = primaryTabs.any { matchesTab(currentRoute, it.first.route) }
 
+    val windowLayout = rememberWindowLayout()
+    val showRail = isPrimaryTab && windowLayout.useNavigationRail
+    val showBottomBar = isPrimaryTab && !windowLayout.useNavigationRail
+
+    val onTabSelected: (StreamCastRoute) -> Unit = { tab ->
+        navController.navigate(tab.route) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    CompositionLocalProvider(LocalWindowLayout provides windowLayout) {
     Scaffold(
         containerColor = StreamCastColors.Background,
         snackbarHost = {
@@ -106,6 +131,7 @@ fun StreamCastNavHost(
                 Box(
                     modifier = Modifier
                         .padding(14.dp)
+                        .widthIn(max = 560.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(StreamCastColors.SurfaceBright)
                         .padding(horizontal = 14.dp, vertical = 11.dp)
@@ -120,21 +146,12 @@ fun StreamCastNavHost(
             }
         },
         bottomBar = {
-            if (isPrimaryTab) {
+            if (showBottomBar) {
                 NavigationBar(containerColor = StreamCastColors.SurfaceSecondary) {
                     primaryTabs.forEach { (tab, icon) ->
-                        val selected = matchesTab(currentRoute, tab.route)
                         NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                navController.navigate(tab.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
+                            selected = matchesTab(currentRoute, tab.route),
+                            onClick = { onTabSelected(tab) },
                             icon = { Icon(icon, contentDescription = tab.label) },
                             label = { Text(tab.label, fontSize = 10.sp) },
                             colors = NavigationBarItemDefaults.colors(
@@ -150,74 +167,114 @@ fun StreamCastNavHost(
             }
         }
     ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = StreamCastRoute.Home.route,
-            modifier = Modifier.fillMaxSize().padding(innerPadding)
-        ) {
-            composable(StreamCastRoute.Home.route) {
-                HomeScreen(
-                    channelsViewModel = channelsViewModel,
-                    castViewModel = castViewModel,
-                    onOpenPlayer = { id -> navController.navigate("player/$id") },
-                    onBrowseChannels = { navController.navigate(StreamCastRoute.LiveTv.route) },
-                    onOpenCategory = { category ->
-                        navController.navigate("live_tv?category=${category.displayName}")
-                    },
-                    onOpenRemote = { navController.navigate(StreamCastRoute.Remote.route) }
-                )
-            }
-
-            // Single destination serving both "live_tv" and "live_tv?category=News"
-            composable(
-                route = "live_tv?category={category}",
-                arguments = listOf(
-                    navArgument("category") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
+        Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            if (showRail) {
+                NavigationRail(
+                    containerColor = StreamCastColors.SurfaceSecondary,
+                    modifier = Modifier.fillMaxHeight()
+                ) {
+                    // Centred: on a tall tablet, top-aligned tabs sit far from the thumb.
+                    Spacer(modifier = Modifier.weight(1f))
+                    primaryTabs.forEach { (tab, icon) ->
+                        NavigationRailItem(
+                            selected = matchesTab(currentRoute, tab.route),
+                            onClick = { onTabSelected(tab) },
+                            icon = { Icon(icon, contentDescription = tab.label) },
+                            label = { Text(tab.label, fontSize = 11.sp) },
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            colors = NavigationRailItemDefaults.colors(
+                                selectedIconColor = StreamCastColors.PrimaryViolet,
+                                selectedTextColor = Color.White,
+                                indicatorColor = StreamCastColors.PrimaryViolet.copy(alpha = 0.2f),
+                                unselectedIconColor = StreamCastColors.TextSecondary,
+                                unselectedTextColor = StreamCastColors.TextSecondary
+                            )
+                        )
                     }
-                )
-            ) { entry ->
-                LiveTvScreen(
-                    channelsViewModel = channelsViewModel,
-                    castViewModel = castViewModel,
-                    initialCategoryName = entry.arguments?.getString("category"),
-                    onOpenPlayer = { id -> navController.navigate("player/$id") }
-                )
+                    Spacer(modifier = Modifier.weight(1f))
+                }
             }
 
-            composable(StreamCastRoute.Favorites.route) {
-                FavoritesScreen(
-                    channelsViewModel = channelsViewModel,
-                    castViewModel = castViewModel,
-                    onOpenPlayer = { id -> navController.navigate("player/$id") },
-                    onExplore = { navController.navigate(StreamCastRoute.LiveTv.route) }
-                )
-            }
+            NavHost(
+                navController = navController,
+                startDestination = StreamCastRoute.Home.route,
+                modifier = Modifier.weight(1f).fillMaxHeight()
+            ) {
+                composable(StreamCastRoute.Home.route) {
+                    HomeScreen(
+                        channelsViewModel = channelsViewModel,
+                        castViewModel = castViewModel,
+                        onOpenPlayer = { id -> navController.navigate("player/$id") },
+                        onOpenFullscreen = { id -> navController.navigate("player/$id?fullscreen=true") },
+                        onBrowseChannels = { navController.navigate(StreamCastRoute.LiveTv.route) },
+                        onOpenCategory = { category ->
+                            navController.navigate("live_tv?category=${category.displayName}")
+                        },
+                        onOpenRemote = { navController.navigate(StreamCastRoute.Remote.route) }
+                    )
+                }
 
-            composable(StreamCastRoute.Remote.route) {
-                // Scoped to this nav entry, but the TV session itself lives in
-                // AppGraph: switching tabs must not drop the connection.
-                val remoteViewModel: RemoteViewModel = viewModel()
-                RemoteScreen(
-                    remoteViewModel = remoteViewModel,
-                    onFindCastDevice = { castViewModel.openCastDialog() }
-                )
-            }
+                // Single destination serving both "live_tv" and "live_tv?category=News"
+                composable(
+                    route = "live_tv?category={category}",
+                    arguments = listOf(
+                        navArgument("category") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        }
+                    )
+                ) { entry ->
+                    LiveTvScreen(
+                        channelsViewModel = channelsViewModel,
+                        castViewModel = castViewModel,
+                        initialCategoryName = entry.arguments?.getString("category"),
+                        onOpenPlayer = { id -> navController.navigate("player/$id") },
+                        onOpenFullscreen = { id -> navController.navigate("player/$id?fullscreen=true") }
+                    )
+                }
 
-            composable(StreamCastRoute.Settings.route) {
-                SettingsScreen(channelsViewModel = channelsViewModel)
-            }
+                composable(StreamCastRoute.Favorites.route) {
+                    FavoritesScreen(
+                        channelsViewModel = channelsViewModel,
+                        castViewModel = castViewModel,
+                        onOpenPlayer = { id -> navController.navigate("player/$id") },
+                        onExplore = { navController.navigate(StreamCastRoute.LiveTv.route) }
+                    )
+                }
 
-            composable(StreamCastRoute.Player.route) { entry ->
-                PlayerScreen(
-                    channelId = entry.arguments?.getString("channelId").orEmpty(),
-                    channelsViewModel = channelsViewModel,
-                    castViewModel = castViewModel,
-                    onBack = { navController.popBackStack() },
-                    onOpenRemote = { navController.navigate(StreamCastRoute.Remote.route) }
-                )
+                composable(StreamCastRoute.Remote.route) {
+                    // Scoped to this nav entry, but the TV session itself lives in
+                    // AppGraph: switching tabs must not drop the connection.
+                    val remoteViewModel: RemoteViewModel = viewModel()
+                    RemoteScreen(
+                        remoteViewModel = remoteViewModel,
+                        onFindCastDevice = { castViewModel.openCastDialog() }
+                    )
+                }
+
+                composable(StreamCastRoute.Settings.route) {
+                    SettingsScreen(channelsViewModel = channelsViewModel)
+                }
+
+                composable(
+                    route = StreamCastRoute.Player.route,
+                    arguments = listOf(
+                        navArgument("fullscreen") {
+                            type = NavType.BoolType
+                            defaultValue = false
+                        }
+                    )
+                ) { entry ->
+                    PlayerScreen(
+                        channelId = entry.arguments?.getString("channelId").orEmpty(),
+                        channelsViewModel = channelsViewModel,
+                        castViewModel = castViewModel,
+                        onBack = { navController.popBackStack() },
+                        onOpenRemote = { navController.navigate(StreamCastRoute.Remote.route) },
+                        startFullscreen = entry.arguments?.getBoolean("fullscreen") == true
+                    )
+                }
             }
         }
 
@@ -231,6 +288,7 @@ fun StreamCastNavHost(
                 }
             )
         }
+    }
     }
 }
 

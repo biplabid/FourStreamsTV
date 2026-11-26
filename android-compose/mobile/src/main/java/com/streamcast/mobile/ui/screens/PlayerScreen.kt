@@ -4,6 +4,21 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.view.ViewGroup
+import android.content.pm.ActivityInfo
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalConfiguration
+import com.streamcast.mobile.guide.ChannelInfo
+import kotlinx.coroutines.launch
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,6 +28,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -61,7 +77,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.streamcast.mobile.AppGraph
+import com.streamcast.mobile.ui.adaptive.LocalWindowLayout
 import com.streamcast.mobile.mirror.ExternalDisplay
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -91,7 +111,8 @@ fun PlayerScreen(
     channelsViewModel: ChannelsViewModel,
     castViewModel: CastViewModel,
     onBack: () -> Unit,
-    onOpenRemote: () -> Unit
+    onOpenRemote: () -> Unit,
+    startFullscreen: Boolean = false
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -227,72 +248,174 @@ fun PlayerScreen(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 24.dp)
-    ) {
-        item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .background(Color.Black)
-            ) {
-                when {
-                    isCasting -> CastingSurface(
-                        channel = channel,
-                        deviceName = connectedDevice?.name.orEmpty(),
-                        state = castPlayback,
-                        error = castError
-                    )
+    val windowLayout = LocalWindowLayout.current
 
-                    playerError != null -> PlaybackErrorSurface(
-                        message = playerError!!,
-                        onRetry = {
-                            playerError = null
-                            isBuffering = true
-                            retryToken++
+    // ---- Full screen ---------------------------------------------------------
+    var fullscreen by rememberSaveable { mutableStateOf(startFullscreen) }
+
+    // A phone turned on its side goes straight to full screen; the page around
+    // the video has no room there anyway.
+    LaunchedEffect(windowLayout.isShortLandscape) {
+        if (windowLayout.isShortLandscape) fullscreen = true
+    }
+
+    // On a phone, full screen also means landscape. A tablet is left in
+    // whatever orientation the user is holding it.
+    val isPhone = LocalConfiguration.current.smallestScreenWidthDp < 600
+    DisposableEffect(fullscreen, isPhone, activity) {
+        if (fullscreen && isPhone) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+        onDispose {
+            if (isPhone) activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    ImmersiveSystemBars(activity = activity, enabled = fullscreen)
+
+    // Opened straight into full screen from a preview: Back returns to the
+    // browser. Entered from the player page: Back just leaves full screen.
+    BackHandler(enabled = fullscreen && !startFullscreen) { fullscreen = false }
+
+    val exitFullscreen: () -> Unit = {
+        if (startFullscreen) onBack() else fullscreen = false
+    }
+
+    // Mirrors the PlayerView controller, so the overlay shows and hides with it.
+    var controlsVisible by remember { mutableStateOf(true) }
+
+    // ---- Channel guide -------------------------------------------------------
+    val epg = remember { AppGraph.epg(context) }
+    val infoRepository = remember { AppGraph.channelInfo(context) }
+    val epgStatus by epg.status.collectAsState()
+    val schedules by epg.schedules.collectAsState()
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(playlist.channels) { epg.ensureLoaded(playlist.channels) }
+
+    var channelInfo by remember(channel.id) { mutableStateOf<ChannelInfo?>(null) }
+    var infoLoading by remember(channel.id) { mutableStateOf(true) }
+    LaunchedEffect(channel.id) {
+        channelInfo = infoRepository.infoFor(channel, playlist.channels)
+        infoLoading = false
+    }
+
+    val schedule = schedules[channel.id].orEmpty()
+    val onNow = schedule.firstOrNull { it.isOnAt(System.currentTimeMillis()) }
+
+    val aboutPanel: @Composable (Modifier, Boolean) -> Unit = { modifier, scrollable ->
+        AboutChannelCard(
+            channel = channel,
+            info = channelInfo,
+            loading = infoLoading,
+            onNow = onNow,
+            modifier = modifier,
+            scrollable = scrollable
+        )
+    }
+    val schedulePanel: @Composable (Modifier) -> Unit = { modifier ->
+        ScheduleCard(
+            channel = channel,
+            programmes = schedule,
+            status = epgStatus,
+            onRetry = { scope.launch { epg.ensureLoaded(playlist.channels, force = true) } },
+            modifier = modifier
+        )
+    }
+
+    // The PlayerView is re-attached, not rebuilt, when this moves between
+    // layouts on rotation: the ExoPlayer above is remembered independently.
+    val videoSurface: @Composable (Modifier) -> Unit = { modifier ->
+        Box(modifier = modifier.background(Color.Black)) {
+            when {
+                isCasting -> CastingSurface(
+                    channel = channel,
+                    deviceName = connectedDevice?.name.orEmpty(),
+                    state = castPlayback,
+                    error = castError
+                )
+
+                playerError != null -> PlaybackErrorSurface(
+                    message = playerError!!,
+                    onRetry = {
+                        playerError = null
+                        isBuffering = true
+                        retryToken++
+                    },
+                    onCast = { castViewModel.castChannel(channel) }
+                )
+
+                isMirroring -> MirroringSurface(
+                    channel = channel,
+                    display = externalDisplay!!,
+                    isBuffering = isBuffering,
+                    error = mirrorError,
+                    onOpenPanel = { mirror.openSystemPanel(context) }
+                )
+
+                else -> {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                                useController = true
+                                setShowNextButton(false)
+                                setShowPreviousButton(false)
+                                setKeepContentOnPlayerReset(true)
+                                setShowSubtitleButton(true)
+                                setControllerVisibilityListener(
+                                    PlayerView.ControllerVisibilityListener { visibility ->
+                                        controlsVisible = visibility == android.view.View.VISIBLE
+                                    }
+                                )
+                            }
                         },
-                        onCast = { castViewModel.castChannel(channel) }
+                        update = { view -> view.player = exoPlayer }
                     )
-
-                    isMirroring -> MirroringSurface(
-                        channel = channel,
-                        display = externalDisplay!!,
-                        isBuffering = isBuffering,
-                        error = mirrorError,
-                        onOpenPanel = { mirror.openSystemPanel(context) }
-                    )
-
-                    else -> {
-                        AndroidView(
-                            modifier = Modifier.fillMaxSize(),
-                            factory = { ctx ->
-                                PlayerView(ctx).apply {
-                                    layoutParams = ViewGroup.LayoutParams(
-                                        ViewGroup.LayoutParams.MATCH_PARENT,
-                                        ViewGroup.LayoutParams.MATCH_PARENT
-                                    )
-                                    useController = true
-                                    setShowNextButton(false)
-                                    setShowPreviousButton(false)
-                                    setKeepContentOnPlayerReset(true)
-                                }
-                            },
-                            update = { view -> view.player = exoPlayer }
+                    if (isBuffering) {
+                        CircularProgressIndicator(
+                            color = StreamCastColors.PrimaryViolet,
+                            modifier = Modifier.align(Alignment.Center).size(34.dp)
                         )
-                        if (isBuffering) {
-                            CircularProgressIndicator(
-                                color = StreamCastColors.PrimaryViolet,
-                                modifier = Modifier.align(Alignment.Center).size(34.dp)
-                            )
-                        }
+                    }
+                    // In full screen the overlay row owns the top edge.
+                    if (!fullscreen) {
                         LiveBadge(
-                            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 14.dp, end = 52.dp)
                         )
                     }
                 }
+            }
 
+            if (fullscreen) {
+                FullscreenOverlay(
+                    visible = controlsVisible || exoPlayer == null || playerError != null,
+                    channel = channel,
+                    isMuted = isMuted,
+                    isCasting = isCasting,
+                    onExit = exitFullscreen,
+                    onPrevious = {
+                        channelsViewModel.adjacentChannel(channel, forward = false)?.let(::switchTo)
+                    },
+                    onNext = {
+                        channelsViewModel.adjacentChannel(channel, forward = true)?.let(::switchTo)
+                    },
+                    onToggleMute = {
+                        if (isCasting) {
+                            castViewModel.sendKey(com.streamcast.shared.cast.RemoteKeyCode.VOLUME_MUTE)
+                        } else {
+                            isMuted = !isMuted
+                        }
+                    },
+                    onCast = { castViewModel.castChannel(channel) }
+                )
+            } else {
                 IconButton(
                     onClick = onBack,
                     modifier = Modifier.align(Alignment.TopStart).padding(4.dp)
@@ -303,135 +426,393 @@ fun PlayerScreen(
                         tint = Color.White
                     )
                 }
-            }
-        }
-
-        item {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ChannelLogo(channel = channel, modifier = Modifier.size(50.dp, 36.dp))
-                    Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(
-                            text = channel.name,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = channelSubtitle(channel),
-                            color = StreamCastColors.TextSecondary,
-                            fontSize = 11.sp
-                        )
-                    }
-                    IconButton(onClick = { channelsViewModel.toggleFavourite(channel.id) }) {
-                        val fav = favouriteIds.contains(channel.id)
-                        Icon(
-                            imageVector = if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                            contentDescription = if (fav) "Remove favourite" else "Add favourite",
-                            tint = if (fav) StreamCastColors.Error else StreamCastColors.TextSecondary
-                        )
-                    }
-                }
-
-                if (channel.isGeoRestricted) {
-                    InfoNote(
-                        "This channel is marked geo-blocked in the playlist. It may only play " +
-                            "from an Indian IP address."
+                IconButton(
+                    onClick = { fullscreen = true },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.Fullscreen,
+                        contentDescription = "Full screen",
+                        tint = Color.White
                     )
                 }
+            }
+        }
+    }
 
-                // Transport controls. When casting these drive the TV.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+    val details: @Composable () -> Unit = {
+        Column(
+            modifier = Modifier.padding(horizontal = windowLayout.gutter, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ChannelLogo(channel = channel, modifier = Modifier.size(50.dp, 36.dp))
+                Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                    Text(
+                        text = channel.name,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = channelSubtitle(channel),
+                        color = StreamCastColors.TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+                IconButton(onClick = { channelsViewModel.toggleFavourite(channel.id) }) {
+                    val fav = favouriteIds.contains(channel.id)
+                    Icon(
+                        imageVector = if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        contentDescription = if (fav) "Remove favourite" else "Add favourite",
+                        tint = if (fav) StreamCastColors.Error else StreamCastColors.TextSecondary
+                    )
+                }
+            }
+
+            if (channel.isGeoRestricted) {
+                InfoNote(
+                    "This channel is marked geo-blocked in the playlist. It may only play " +
+                        "from an Indian IP address."
+                )
+            }
+
+            // Transport controls. When casting these drive the TV.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircleControl(
+                    icon = Icons.Rounded.SkipPrevious,
+                    description = "Previous channel"
                 ) {
-                    CircleControl(
-                        icon = Icons.Rounded.SkipPrevious,
-                        description = "Previous channel"
-                    ) {
-                        channelsViewModel.adjacentChannel(channel, forward = false)
-                            ?.let(::switchTo)
+                    channelsViewModel.adjacentChannel(channel, forward = false)
+                        ?.let(::switchTo)
+                }
+                CircleControl(
+                    icon = if (isCasting) {
+                        if (castPlayback == CastPlaybackState.PLAYING) Icons.Rounded.Pause
+                        else Icons.Rounded.PlayArrow
+                    } else {
+                        if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow
+                    },
+                    description = "Play or pause",
+                    primary = true
+                ) {
+                    if (isCasting) {
+                        castViewModel.sendKey(
+                            com.streamcast.shared.cast.RemoteKeyCode.MEDIA_PLAY_PAUSE
+                        )
+                    } else {
+                        exoPlayer?.let { it.playWhenReady = !it.playWhenReady }
                     }
-                    CircleControl(
-                        icon = if (isCasting) {
-                            if (castPlayback == CastPlaybackState.PLAYING) Icons.Rounded.Pause
-                            else Icons.Rounded.PlayArrow
-                        } else {
-                            if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow
-                        },
-                        description = "Play or pause",
-                        primary = true
-                    ) {
-                        if (isCasting) {
-                            castViewModel.sendKey(
-                                com.streamcast.shared.cast.RemoteKeyCode.MEDIA_PLAY_PAUSE
-                            )
-                        } else {
-                            exoPlayer?.let { it.playWhenReady = !it.playWhenReady }
-                        }
+                }
+                CircleControl(
+                    icon = Icons.Rounded.SkipNext,
+                    description = "Next channel"
+                ) {
+                    channelsViewModel.adjacentChannel(channel, forward = true)
+                        ?.let(::switchTo)
+                }
+                CircleControl(
+                    icon = if (isMuted) Icons.AutoMirrored.Rounded.VolumeOff
+                    else Icons.AutoMirrored.Rounded.VolumeUp,
+                    description = "Mute"
+                ) {
+                    if (isCasting) {
+                        castViewModel.sendKey(
+                            com.streamcast.shared.cast.RemoteKeyCode.VOLUME_MUTE
+                        )
+                    } else {
+                        isMuted = !isMuted
                     }
-                    CircleControl(
-                        icon = Icons.Rounded.SkipNext,
-                        description = "Next channel"
+                }
+                Box(modifier = Modifier.weight(1f))
+                CircleControl(
+                    icon = if (isCasting) Icons.Rounded.CastConnected else Icons.Rounded.Cast,
+                    description = if (isCasting) "Cast settings" else "Cast to TV",
+                    primary = isCasting
+                ) {
+                    if (isCasting) onOpenRemote() else castViewModel.castChannel(channel)
+                }
+            }
+        }
+    }
+
+    val relatedRail: @Composable () -> Unit = {
+        Column {
+            SectionHeader(
+                title = "More in ${channel.category.displayName}",
+                modifier = Modifier.padding(horizontal = windowLayout.gutter)
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = windowLayout.gutter, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(related, key = { it.id }) { item ->
+                    ChannelRailCard(
+                        channel = item,
+                        isFavourite = favouriteIds.contains(item.id),
+                        onClick = { switchTo(item) },
+                        onCast = { castViewModel.castChannel(item) },
+                        onToggleFavourite = { channelsViewModel.toggleFavourite(item.id) }
+                    )
+                }
+            }
+        }
+    }
+
+    when {
+        fullscreen -> videoSurface(Modifier.fillMaxSize())
+
+        windowLayout.useTwoPane && windowLayout.heightDp >= TALL_ENOUGH_FOR_FIXED_VIDEO -> {
+            // Landscape tablet. Left: the video stays put, with the channel
+            // controls under it and About + Schedule filling the rest of the
+            // height, each scrolling on its own. Right: the rest of the genre.
+            Row(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.weight(1.7f).fillMaxHeight()) {
+                    videoSurface(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                    details()
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(start = windowLayout.gutter, end = windowLayout.gutter, bottom = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        channelsViewModel.adjacentChannel(channel, forward = true)
-                            ?.let(::switchTo)
+                        aboutPanel(Modifier.weight(1f).fillMaxHeight(), true)
+                        schedulePanel(Modifier.weight(1.25f).fillMaxHeight())
                     }
-                    CircleControl(
-                        icon = if (isMuted) Icons.AutoMirrored.Rounded.VolumeOff
-                        else Icons.AutoMirrored.Rounded.VolumeUp,
-                        description = "Mute"
-                    ) {
-                        if (isCasting) {
-                            castViewModel.sendKey(
-                                com.streamcast.shared.cast.RemoteKeyCode.VOLUME_MUTE
-                            )
-                        } else {
-                            isMuted = !isMuted
-                        }
-                    }
-                    Box(modifier = Modifier.weight(1f))
-                    CircleControl(
-                        icon = if (isCasting) Icons.Rounded.CastConnected else Icons.Rounded.Cast,
-                        description = if (isCasting) "Cast settings" else "Cast to TV",
-                        primary = isCasting
-                    ) {
-                        if (isCasting) onOpenRemote() else castViewModel.castChannel(channel)
-                    }
+                }
+                if (related.isNotEmpty()) {
+                    RelatedList(
+                        channel = channel,
+                        related = related,
+                        favouriteIds = favouriteIds,
+                        onSwitch = ::switchTo,
+                        onCast = { castViewModel.castChannel(it) },
+                        onToggleFavourite = { channelsViewModel.toggleFavourite(it.id) },
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                    )
                 }
             }
         }
 
-        if (related.isNotEmpty()) {
-            item {
-                SectionHeader(
-                    title = "More in ${channel.category.displayName}",
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-            }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+        windowLayout.useTwoPane -> {
+            // Short landscape (a phone that has left full screen): everything
+            // scrolls, since a fixed video would leave no room below it.
+            Row(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.weight(1.7f).fillMaxHeight(),
+                    contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    items(related, key = { it.id }) { item ->
-                        ChannelRailCard(
-                            channel = item,
-                            isFavourite = favouriteIds.contains(item.id),
-                            onClick = { switchTo(item) },
-                            onCast = { castViewModel.castChannel(item) },
-                            onToggleFavourite = { channelsViewModel.toggleFavourite(item.id) }
+                    item { videoSurface(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) }
+                    item { details() }
+                    item { aboutPanel(Modifier.padding(horizontal = windowLayout.gutter).fillMaxWidth(), false) }
+                    item {
+                        schedulePanel(
+                            Modifier
+                                .padding(horizontal = windowLayout.gutter, vertical = 14.dp)
+                                .fillMaxWidth()
+                                .height(SCHEDULE_HEIGHT_IN_LIST)
+                        )
+                    }
+                }
+                if (related.isNotEmpty()) {
+                    RelatedList(
+                        channel = channel,
+                        related = related,
+                        favouriteIds = favouriteIds,
+                        onSwitch = ::switchTo,
+                        onCast = { castViewModel.castChannel(it) },
+                        onToggleFavourite = { channelsViewModel.toggleFavourite(it.id) },
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                    )
+                }
+            }
+        }
+
+        else -> {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                item {
+                    // On a portrait tablet a full-width 16:9 frame is fine;
+                    // it is only ever as tall as about a third of the screen.
+                    videoSurface(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                }
+                item { details() }
+                if (related.isNotEmpty()) {
+                    item { relatedRail() }
+                }
+                item {
+                    if (windowLayout.isCompact) {
+                        aboutPanel(
+                            Modifier.padding(horizontal = windowLayout.gutter, vertical = 8.dp).fillMaxWidth(),
+                            false
+                        )
+                    } else {
+                        // Portrait tablet: About and Schedule side by side.
+                        Row(
+                            modifier = Modifier
+                                .padding(horizontal = windowLayout.gutter, vertical = 8.dp)
+                                .fillMaxWidth()
+                                .height(SCHEDULE_HEIGHT_IN_LIST),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            aboutPanel(Modifier.weight(1f).fillMaxHeight(), true)
+                            schedulePanel(Modifier.weight(1.25f).fillMaxHeight())
+                        }
+                    }
+                }
+                if (windowLayout.isCompact) {
+                    item {
+                        schedulePanel(
+                            Modifier
+                                .padding(horizontal = windowLayout.gutter, vertical = 8.dp)
+                                .fillMaxWidth()
+                                .height(SCHEDULE_HEIGHT_IN_LIST)
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/** Below this, a landscape window is too short to pin the video and fill under it. */
+private const val TALL_ENOUGH_FOR_FIXED_VIDEO = 600
+
+/** Height given to the schedule when it sits inside a scrolling page. */
+private val SCHEDULE_HEIGHT_IN_LIST = 420.dp
+
+/** "More in <genre>" as a vertical list, beside the video on a wide screen. */
+@Composable
+private fun RelatedList(
+    channel: Channel,
+    related: List<Channel>,
+    favouriteIds: Collection<String>,
+    onSwitch: (Channel) -> Unit,
+    onCast: (Channel) -> Unit,
+    onToggleFavourite: (Channel) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyColumn(
+        modifier = modifier.background(StreamCastColors.SurfaceLow),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        item {
+            SectionHeader(title = "More in ${channel.category.displayName}")
+        }
+        items(related, key = { it.id }) { item ->
+            ChannelListRow(
+                channel = item,
+                isFavourite = favouriteIds.contains(item.id),
+                onClick = { onSwitch(item) },
+                onCast = { onCast(item) },
+                onToggleFavourite = { onToggleFavourite(item) }
+            )
+        }
+    }
+}
+
+/**
+ * Controls laid over the full-screen picture, shown and hidden together with
+ * the player's own controller: leave full screen, the channel name, channel
+ * up/down, mute and cast. Play/pause, the live seek bar, quality, audio and
+ * subtitle tracks come from the player's controller underneath.
+ */
+@Composable
+private fun BoxScope.FullscreenOverlay(
+    visible: Boolean,
+    channel: Channel,
+    isMuted: Boolean,
+    isCasting: Boolean,
+    onExit: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onToggleMute: () -> Unit,
+    onCast: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent))
+                )
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onExit) {
+                Icon(Icons.Rounded.FullscreenExit, contentDescription = "Exit full screen", tint = Color.White)
+            }
+            ChannelLogo(channel = channel, modifier = Modifier.size(44.dp, 32.dp))
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                Text(
+                    text = channel.name,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = channelSubtitle(channel),
+                    color = Color.White.copy(alpha = 0.75f),
+                    fontSize = 11.sp,
+                    maxLines = 1
+                )
+            }
+            IconButton(onClick = onPrevious) {
+                Icon(Icons.Rounded.SkipPrevious, contentDescription = "Previous channel", tint = Color.White)
+            }
+            IconButton(onClick = onNext) {
+                Icon(Icons.Rounded.SkipNext, contentDescription = "Next channel", tint = Color.White)
+            }
+            IconButton(onClick = onToggleMute) {
+                Icon(
+                    if (isMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                    contentDescription = "Mute",
+                    tint = Color.White
+                )
+            }
+            IconButton(onClick = onCast) {
+                Icon(
+                    if (isCasting) Icons.Rounded.CastConnected else Icons.Rounded.Cast,
+                    contentDescription = "Cast to TV",
+                    tint = Color.White
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Hides the status and navigation bars while [enabled], restoring them when it
+ * stops being enabled or the screen leaves. Swiping from an edge brings them
+ * back temporarily, so the viewer is never trapped.
+ */
+@Composable
+private fun ImmersiveSystemBars(activity: Activity?, enabled: Boolean) {
+    DisposableEffect(activity, enabled) {
+        val window = activity?.window
+        if (window == null || !enabled) return@DisposableEffect onDispose { }
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
     }
 }
 

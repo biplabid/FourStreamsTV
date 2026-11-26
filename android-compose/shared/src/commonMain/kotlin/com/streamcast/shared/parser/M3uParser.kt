@@ -100,7 +100,8 @@ object M3uParser {
             quality = quality,
             isLive = true,
             isGeoRestricted = isGeoRestricted,
-            epgAvailable = false
+            epgAvailable = false,
+            tvgId = attrs["tvg-id"]?.ifBlank { null }
         )
     }
 

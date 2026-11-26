@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.CastConnected
 import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.Movie
@@ -426,7 +427,8 @@ fun ChannelGridCard(
     onToggleFavourite: () -> Unit,
     modifier: Modifier = Modifier,
     previewPlayer: ExoPlayer? = null,
-    previewRevealed: Boolean = false
+    previewRevealed: Boolean = false,
+    onFullscreen: (() -> Unit)? = null
 ) {
     // Drives both halves of the dissolve: video fades up as the logo fades out.
     val videoAlpha by animateFloatAsState(
@@ -482,16 +484,25 @@ fun ChannelGridCard(
                     modifier = Modifier.size(15.dp)
                 )
             }
-            IconButton(
-                onClick = onCast,
-                modifier = Modifier.align(Alignment.BottomEnd).size(28.dp)
-            ) {
-                Icon(
-                    Icons.Rounded.Cast,
-                    contentDescription = "Cast ${channel.name}",
-                    tint = Color.White,
-                    modifier = Modifier.size(15.dp)
-                )
+            Row(modifier = Modifier.align(Alignment.BottomEnd)) {
+                if (onFullscreen != null) {
+                    IconButton(onClick = onFullscreen, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Rounded.Fullscreen,
+                            contentDescription = "Play ${channel.name} full screen",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+                IconButton(onClick = onCast, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Rounded.Cast,
+                        contentDescription = "Cast ${channel.name}",
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
             }
         }
         Column(modifier = Modifier.padding(9.dp)) {

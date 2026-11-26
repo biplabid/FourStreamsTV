@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ChevronLeft
@@ -64,6 +67,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import com.streamcast.mobile.ui.adaptive.LocalWindowLayout
 import com.streamcast.mobile.ui.preview.PreviewVideoLayer
 import com.streamcast.mobile.ui.preview.rememberChannelPreviewController
 import com.streamcast.mobile.ui.theme.StreamCastColors
@@ -83,6 +87,7 @@ fun HomeScreen(
     channelsViewModel: ChannelsViewModel,
     castViewModel: CastViewModel,
     onOpenPlayer: (String) -> Unit,
+    onOpenFullscreen: (String) -> Unit,
     onBrowseChannels: () -> Unit,
     onOpenCategory: (ChannelCategory) -> Unit,
     onOpenRemote: () -> Unit
@@ -206,67 +211,113 @@ fun HomeScreen(
     }
     // ------------------------------------------------------------------------
 
+    val windowLayout = LocalWindowLayout.current
+
+    val heroBlock: @Composable (Channel) -> Unit = { channel ->
+        FeaturedPreviewWindow(
+            channel = channel,
+            player = heroController.playerFor(channel.id),
+            revealed = heroController.isRevealed &&
+                heroController.activeChannelId == channel.id,
+            isFavourite = favouriteIds.contains(channel.id),
+            onCast = { castViewModel.castChannel(channel) },
+            // Free the hero's decoder before the player claims one.
+            onWatch = {
+                heroController.stop()
+                onOpenPlayer(channel.id)
+            },
+            onFullscreen = {
+                heroController.stop()
+                onOpenFullscreen(channel.id)
+            },
+            onPrevious = ::goBack,
+            onNext = ::goForward,
+            canGoBack = cursor > 0,
+            positionLabel = if (history.isEmpty()) "" else "${cursor + 1}/${history.size}",
+            onToggleFavourite = { channelsViewModel.toggleFavourite(channel.id) }
+        )
+    }
+
+    val titleBlock: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "FourStreamsTV",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 24.sp
+            )
+            Text(
+                text = playlistSummary(
+                    channelCount = playlist.channels.size,
+                    isLoading = playlist.isLoading,
+                    source = playlist.source,
+                    fetchedAtMillis = playlist.fetchedAtMillis
+                ),
+                color = StreamCastColors.TextSecondary,
+                fontSize = 12.sp
+            )
+        }
+    }
+
+    // Cast status / call to action
+    val castBlock: @Composable () -> Unit = {
+        val device = connectedDevice
+        if (device != null) {
+            ActiveCastBanner(
+                device = device,
+                channel = castingChannel,
+                statusText = castStatusText(castPlayback),
+                onDisconnect = { castViewModel.disconnect() },
+                onOpenRemote = onOpenRemote
+            )
+        } else {
+            ConnectTvPrompt(onClick = { castViewModel.openCastDialog() })
+        }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(horizontal = windowLayout.gutter, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        // Sits above everything else; the rest of the home screen is unchanged
-        // and simply moves down.
-        heroChannel?.let { channel ->
+        val hero = heroChannel
+        if (windowLayout.useTwoPane && hero != null) {
+            // Landscape tablet or phone on its side: a full-width 16:9 hero
+            // would fill the entire screen, so it shares the top row instead.
             item {
-                FeaturedPreviewWindow(
-                    channel = channel,
-                    player = heroController.playerFor(channel.id),
-                    revealed = heroController.isRevealed &&
-                        heroController.activeChannelId == channel.id,
-                    isFavourite = favouriteIds.contains(channel.id),
-                    onCast = { castViewModel.castChannel(channel) },
-                    onWatch = { onOpenPlayer(channel.id) },
-                    onPrevious = ::goBack,
-                    onNext = ::goForward,
-                    canGoBack = cursor > 0,
-                    positionLabel = if (history.isEmpty()) "" else "${cursor + 1}/${history.size}",
-                    onToggleFavourite = { channelsViewModel.toggleFavourite(channel.id) }
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Box(modifier = Modifier.weight(1.5f)) { heroBlock(hero) }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        titleBlock()
+                        castBlock()
+                        // The genres fill the space beside the hero rather than
+                        // leaving it empty and pushing them below the fold.
+                        if (categories.isNotEmpty()) {
+                            SectionHeader(title = "Browse by genre")
+                            GenreRows(
+                                categories = categories,
+                                counts = counts,
+                                columns = GENRE_COLUMNS_BESIDE_HERO,
+                                onOpenCategory = onOpenCategory
+                            )
+                        }
+                    }
+                }
             }
-        }
-
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "FourStreamsTV",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp
-                )
-                Text(
-                    text = playlistSummary(
-                        channelCount = playlist.channels.size,
-                        isLoading = playlist.isLoading,
-                        source = playlist.source,
-                        fetchedAtMillis = playlist.fetchedAtMillis
-                    ),
-                    color = StreamCastColors.TextSecondary,
-                    fontSize = 12.sp
-                )
+        } else {
+            // Sits above everything else; the rest of the home screen is
+            // unchanged and simply moves down.
+            if (hero != null) {
+                item { heroBlock(hero) }
             }
-        }
-
-        // Cast status / call to action
-        item {
-            val device = connectedDevice
-            if (device != null) {
-                ActiveCastBanner(
-                    device = device,
-                    channel = castingChannel,
-                    statusText = castStatusText(castPlayback),
-                    onDisconnect = { castViewModel.disconnect() },
-                    onOpenRemote = onOpenRemote
-                )
-            } else {
-                ConnectTvPrompt(onClick = { castViewModel.openCastDialog() })
-            }
+            item { titleBlock() }
+            item { castBlock() }
         }
 
         // Playlist error, shown without hiding whatever channels we already have
@@ -334,24 +385,39 @@ fun HomeScreen(
             return@LazyColumn
         }
 
-        if (categories.isNotEmpty()) {
+        val genresBesideHero = windowLayout.useTwoPane && hero != null
+        if (categories.isNotEmpty() && !genresBesideHero) {
             item { SectionHeader(title = "Browse by genre") }
             item {
-                LazyHorizontalGrid(
-                    rows = GridCells.Fixed(2),
-                    modifier = Modifier.height(190.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(categories, key = { it.name }) { category ->
-                        CategoryCard(
-                            category = category,
-                            channelCount = counts[category] ?: 0,
-                            icon = iconForCategory(category),
-                            onClick = { onOpenCategory(category) },
-                            modifier = Modifier.width(150.dp)
-                        )
+                if (windowLayout.isCompact) {
+                    // A phone scrolls the genres sideways in two rows.
+                    LazyHorizontalGrid(
+                        rows = GridCells.Fixed(2),
+                        // Sized from the tile's natural height so the channel
+                        // count is never clipped off the bottom of a tile.
+                        modifier = Modifier.height(GENRE_TILE_HEIGHT * 2 + GENRE_SPACING),
+                        horizontalArrangement = Arrangement.spacedBy(GENRE_SPACING),
+                        verticalArrangement = Arrangement.spacedBy(GENRE_SPACING)
+                    ) {
+                        items(categories, key = { it.name }) { category ->
+                            CategoryCard(
+                                category = category,
+                                channelCount = counts[category] ?: 0,
+                                icon = iconForCategory(category),
+                                onClick = { onOpenCategory(category) },
+                                modifier = Modifier.width(150.dp)
+                            )
+                        }
                     }
+                } else {
+                    // A tablet has the width to show every genre at once.
+                    val columns = ((windowLayout.widthDp - 128) / 180).coerceIn(3, 6)
+                    GenreRows(
+                        categories = categories,
+                        counts = counts,
+                        columns = columns,
+                        onOpenCategory = onOpenCategory
+                    )
                 }
             }
         }
@@ -381,15 +447,27 @@ fun HomeScreen(
         }
 
         item {
-            PillButton(
-                text = "Browse all ${playlist.channels.size} channels",
-                onClick = onBrowseChannels,
-                filled = false,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                PillButton(
+                    text = "Browse all ${playlist.channels.size} channels",
+                    onClick = onBrowseChannels,
+                    filled = false,
+                    modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth()
+                )
+            }
         }
     }
 }
+
+/**
+ * Height of one genre tile: padding, icon, and two lines of text at the theme's
+ * 24sp line height (fontSize alone does not shrink it).
+ */
+private val GENRE_TILE_HEIGHT = 124.dp
+private val GENRE_SPACING = 10.dp
+
+/** Genre tiles per row when they sit beside the featured window. */
+private const val GENRE_COLUMNS_BESIDE_HERO = 3
 
 /** How many dead channels to roll past before giving up on the hero. */
 private const val MAX_HERO_ROLLS = 8
@@ -427,6 +505,7 @@ private fun FeaturedPreviewWindow(
     isFavourite: Boolean,
     onCast: () -> Unit,
     onWatch: () -> Unit,
+    onFullscreen: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     canGoBack: Boolean,
@@ -506,6 +585,11 @@ private fun FeaturedPreviewWindow(
                     description = if (isFavourite) "Remove favourite" else "Add favourite",
                     tint = if (isFavourite) StreamCastColors.Error else Color.White,
                     onClick = onToggleFavourite
+                )
+                ScrimmedIconButton(
+                    icon = Icons.Rounded.Fullscreen,
+                    description = "Play full screen on this device",
+                    onClick = onFullscreen
                 )
             }
 
@@ -597,6 +681,38 @@ private fun FeaturedPreviewWindow(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
             )
+        }
+    }
+}
+
+/**
+ * Genre tiles in fixed-width rows that size to their content. Not lazy: there
+ * are only ever a handful of genres.
+ */
+@Composable
+private fun GenreRows(
+    categories: List<ChannelCategory>,
+    counts: Map<ChannelCategory, Int>,
+    columns: Int,
+    onOpenCategory: (ChannelCategory) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(GENRE_SPACING)) {
+        categories.chunked(columns).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(GENRE_SPACING)) {
+                row.forEach { category ->
+                    CategoryCard(
+                        category = category,
+                        channelCount = counts[category] ?: 0,
+                        icon = iconForCategory(category),
+                        onClick = { onOpenCategory(category) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                // Keep a short last row aligned to the grid.
+                repeat(columns - row.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
         }
     }
 }

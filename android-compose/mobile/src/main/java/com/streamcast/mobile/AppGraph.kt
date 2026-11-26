@@ -3,6 +3,8 @@ package com.streamcast.mobile
 import android.content.Context
 import com.streamcast.mobile.atv.AtvRemoteController
 import com.streamcast.mobile.cast.AndroidCastAndRemoteManager
+import com.streamcast.mobile.guide.ChannelInfoRepository
+import com.streamcast.mobile.guide.EpgRepository
 import com.streamcast.mobile.mirror.MirrorController
 import com.streamcast.shared.data.PlaylistRepository
 import com.streamcast.shared.data.UserPreferences
@@ -80,6 +82,23 @@ object AppGraph {
     fun mirror(context: Context): MirrorController =
         mirror ?: synchronized(this) {
             mirror ?: MirrorController(context.applicationContext).also { mirror = it }
+        }
+
+    @Volatile
+    private var epg: EpgRepository? = null
+
+    /** Programme guide. Shared: the parsed schedules are the expensive part. */
+    fun epg(context: Context): EpgRepository =
+        epg ?: synchronized(this) {
+            epg ?: EpgRepository(context.applicationContext).also { epg = it }
+        }
+
+    @Volatile
+    private var channelInfo: ChannelInfoRepository? = null
+
+    fun channelInfo(context: Context): ChannelInfoRepository =
+        channelInfo ?: synchronized(this) {
+            channelInfo ?: ChannelInfoRepository(context.applicationContext).also { channelInfo = it }
         }
 
     /** Reported to the TV during the remote handshake. */
